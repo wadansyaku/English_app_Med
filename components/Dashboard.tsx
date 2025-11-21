@@ -136,7 +136,7 @@ const ActivityBarChart: React.FC<{ logs: ActivityLog[] }> = ({ logs }) => {
                         <div key={data.date} className="flex flex-col items-center flex-1 group cursor-pointer relative">
                             {/* Tooltip */}
                             <div className="opacity-0 group-hover:opacity-100 absolute -top-8 bg-slate-800 text-white text-xs font-bold px-2 py-1 rounded transition-opacity whitespace-nowrap z-10">
-                                {data.count} words
+                                {data.count} 語
                             </div>
                             
                             {/* Bar */}
@@ -217,7 +217,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onSelectBook }) => {
       return <Onboarding 
                 user={user} 
                 isRetake={true}
-                historySummary={`Current Level: ${user.englishLevel}, XP: ${user.stats?.xp}, Grade: ${GRADE_LABELS[user.grade || UserGrade.ADULT]}`}
+                historySummary={`現在レベル: ${user.englishLevel || '未設定'}, 獲得XP: ${user.stats?.xp ?? 0}, 学年: ${GRADE_LABELS[user.grade || UserGrade.ADULT]}`}
                 onComplete={(updated) => {
                     storage.updateSessionUser(updated); 
                     setShowOnboarding(false);

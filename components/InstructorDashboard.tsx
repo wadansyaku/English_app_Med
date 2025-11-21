@@ -143,7 +143,7 @@ const InstructorDashboard: React.FC = () => {
                             <td className="py-4 px-6">
                                 <div className="flex items-center gap-1">
                                     <span className="font-bold text-medace-600">{s.totalLearned}</span>
-                                    <span className="text-xs text-slate-400">words</span>
+                                    <span className="text-xs text-slate-400">語</span>
                                 </div>
                             </td>
                             <td className="py-4 px-6 text-slate-500 text-sm">
