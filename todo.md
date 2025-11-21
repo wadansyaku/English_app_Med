@@ -3,13 +3,19 @@
 
 ## 1. Current Focus: UX Localization & Core Experience Polish
 **Priority: High** (ユーザー体験の向上とバグ修正)
-- [ ] **UI Localization**: `types.ts` のGrade/Statusを完全日本語化。ダッシュボードの不要な英語（Curriculum等）を削除。
-- [ ] **Progress Logic Fix**: `My単語帳`などの進捗率が、学習直後に正しく1%でも進むように判定ロジックを緩和・修正。
-- [ ] **Dynamic Learning Plan**: 作成後のプラン（1日の目標数や対象ブック）を編集可能にする機能の実装。
-- [ ] **Diagnostic Test UX**: 
-    - 待ち時間のストレス軽減（ローディング表示の工夫）。
-    - 問題のバリエーション増加（プロンプト修正）。
-    - 結果画面への遷移バグ修正。
+- [ ] **UI Localization**
+  - [ ] `types.ts` の列挙型を日本語ラベルへ統一し、`GRADE_LABELS/STATUS_LABELS` を参照しない部分を `Dashboard.tsx`・`Onboarding.tsx` で置き換える。
+  - [ ] ダッシュボードのカードラベル（Curriculum/Progressなど）を日本語に整理し、`Layout.tsx` のナビゲーションも含めて英語表記を排除する。
+- [ ] **Progress Logic Fix**
+  - [ ] `services/storage.ts` の `getBookProgress` で初回学習時に最小1%が反映されるよう計算式を調整し、`LearningHistory` の保存タイミングを `StudyMode.tsx` と同期させる。
+  - [ ] 進捗が変化した瞬間にUIへ反映されるよう、`Dashboard.tsx` の `progressMap` 更新処理を非同期完了後に必ずトリガーする。
+- [ ] **Dynamic Learning Plan**
+  - [ ] 既存プラン表示（`Dashboard.tsx` または `Onboarding.tsx` のカード）に「編集/再計算」ボタンを追加し、`services/storage.ts` の `saveLearningPlan` を上書き保存に対応させる。
+  - [ ] 1日目標数・対象ブックの入力UIを簡素化し、バリデーションを`components`側で行った上で保存リクエストを出す。
+- [ ] **Diagnostic Test UX**
+  - [ ] ローディング状態を `Onboarding.tsx` に統一（スケルトン/進捗バー）し、タイムアウト時は `services/gemini.ts` からのエラーを日本語で再試行案内にする。
+  - [ ] プロンプト（`services/gemini.ts`）にバリエーション要求を追加し、問題形式のシャッフルと難易度レンジを学年（`UserGrade`）に基づいて制御する。
+  - [ ] 診断結果からダッシュボードへの遷移バグを再現テストし、`currentView` 遷移と `user.englishLevel` 更新をセットで行う。
 
 ## 2. Next Up: Visuals & Social
 - [ ] **Graph Improvement**: Learning ActivityをGitHub風から洗練された棒グラフへ変更し、「週間学習記録」と命名。
