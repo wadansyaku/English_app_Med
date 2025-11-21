@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
   <head>
@@ -25,6 +26,17 @@
             },
             fontFamily: {
               sans: ['Inter', 'system-ui', 'sans-serif'],
+            },
+            animation: {
+                'ping-slow': 'ping 2s cubic-bezier(0, 0, 0.2, 1) infinite',
+                'tilt': 'tilt 10s infinite linear',
+            },
+            keyframes: {
+                tilt: {
+                    '0%, 50%, 100%': { transform: 'rotate(0deg)' },
+                    '25%': { transform: 'rotate(0.5deg)' },
+                    '75%': { transform: 'rotate(-0.5deg)' },
+                }
             }
           }
         }
@@ -57,6 +69,13 @@
       .card-back {
         transform: rotateY(180deg);
       }
+      .scrollbar-hide::-webkit-scrollbar {
+          display: none;
+      }
+      .scrollbar-hide {
+          -ms-overflow-style: none;
+          scrollbar-width: none;
+      }
     </style>
   <script type="importmap">
 {
@@ -65,12 +84,15 @@
     "lucide-react": "https://aistudiocdn.com/lucide-react@^0.554.0",
     "react/": "https://aistudiocdn.com/react@^19.2.0/",
     "react": "https://aistudiocdn.com/react@^19.2.0",
-    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.30.0"
+    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.30.0",
+    "@supabase/supabase-js": "https://aistudiocdn.com/@supabase/supabase-js@^2.39.0"
   }
 }
 </script>
+<link rel="stylesheet" href="/index.css">
 </head>
   <body>
     <div id="root"></div>
-  </body>
+  <script type="module" src="/index.tsx"></script>
+</body>
 </html>
