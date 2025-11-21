@@ -643,7 +643,7 @@ export class SupabaseStorageService implements IStorageService {
         .select('*', { count: 'exact', head: true })
         .eq('user_id', uid)
         .eq('book_id', bookId)
-        .gt('interval', 0); // Changed from 3 to 0 to reflect ANY progress
+        .or('interval.gt.0,attempt_count.gt.0'); // Count any attempted word as progress
         
     return {
         bookId,
