@@ -309,7 +309,7 @@ const StudyMode: React.FC<StudyModeProps> = ({ user, bookId, onBack, onSessionCo
           <ArrowLeft className="w-4 h-4" /> <span className="hidden sm:inline">中断</span>
         </button>
         <div className="flex items-center gap-2">
-            {bookId === 'smart-session' && <span className="bg-medace-100 text-medace-700 text-xs font-bold px-2 py-1 rounded flex items-center gap-1"><Zap className="w-3 h-3" /> Daily Quest</span>}
+            {bookId === 'smart-session' && <span className="bg-medace-100 text-medace-700 text-xs font-bold px-2 py-1 rounded flex items-center gap-1"><Zap className="w-3 h-3" /> デイリークエスト</span>}
             <span className="text-slate-400 text-sm font-mono bg-slate-100 px-3 py-1 rounded-full">
             {currentIndex + 1} / {queue.length}
             </span>
@@ -382,7 +382,7 @@ const StudyMode: React.FC<StudyModeProps> = ({ user, bookId, onBack, onSessionCo
                                 <div className="flex items-center justify-between mb-2 text-medace-400 text-[10px] uppercase font-bold tracking-wider">
                                     <span className="flex items-center gap-1">
                                         <Sparkles className="w-3 h-3" /> 
-                                        AI Context {bookContext && `(${bookContext.slice(0,15)}...)`}
+                                        AI解説 {bookContext && `(${bookContext.slice(0,15)}...)`}
                                     </span>
                                     <button onClick={(e) => speakText(e, aiContext.english)} className="hover:text-white transition-colors"><Volume2 className="w-4 h-4" /></button>
                                 </div>
@@ -397,7 +397,7 @@ const StudyMode: React.FC<StudyModeProps> = ({ user, bookId, onBack, onSessionCo
                                 )}
                             </div>
                         ) : (
-                            <p className="text-slate-500 text-xs text-center">Context unavailable</p>
+                            <p className="text-slate-500 text-xs text-center">コンテキスト情報なし</p>
                         )}
                     </div>
 
@@ -408,7 +408,7 @@ const StudyMode: React.FC<StudyModeProps> = ({ user, bookId, onBack, onSessionCo
                         </div>
                     ) : aiImage ? (
                         <div className="w-full h-32 md:h-40 relative group">
-                             <img src={aiImage} alt="Visual Mnemonic" className="w-full h-full object-contain opacity-90 group-hover:opacity-100 transition-opacity" />
+                             <img src={aiImage} alt="視覚的記憶補助" className="w-full h-full object-contain opacity-90 group-hover:opacity-100 transition-opacity" />
                         </div>
                     ) : (
                         <button onClick={generateImage} className="flex flex-col items-center gap-2 text-slate-500 hover:text-blue-400 transition-colors group p-4 w-full h-full justify-center">

@@ -59,6 +59,18 @@ const IDB_MOCK_USERS: UserProfile[] = [
   { uid: 'mock-admin-001', displayName: 'システム管理者', role: UserRole.ADMIN, email: 'admin@medace.com' }
 ];
 
+// Helper for Progress Calculation
+const calculatePercentage = (learned: number, total: number): number => {
+    if (total === 0) return 0;
+    if (learned === 0) return 0;
+    if (learned === total) return 100;
+    
+    const pct = Math.round((learned / total) * 100);
+    if (pct === 0 && learned > 0) return 1; // Ensure at least 1% if started
+    if (pct === 100 && learned < total) return 99; // Prevent premature 100%
+    return pct;
+};
+
 class IndexedDBStorageService implements IStorageService {
   private dbPromise: Promise<IDBDatabase>;
 
@@ -447,11 +459,11 @@ class IndexedDBStorageService implements IStorageService {
             let learned = 0;
             all.forEach((r: any) => {
                 if (r.id.startsWith(uid + '_') && r.data.bookId === bookId) {
-                    // Count as learned if started (attemptCount > 0) or has interval > 0
                     if(r.data.attemptCount > 0 || r.data.interval > 0) learned++;
                 }
             });
-            resolve({ bookId, learnedCount: learned, totalCount: words.length, percentage: Math.round((learned / words.length) * 100) });
+            const percentage = calculatePercentage(learned, words.length);
+            resolve({ bookId, learnedCount: learned, totalCount: words.length, percentage });
         };
     });
   }

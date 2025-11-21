@@ -3,7 +3,7 @@ import React, { useEffect, useState } from 'react';
 import { BookMetadata, BookProgress, UserProfile, UserGrade, EnglishLevel, LearningPlan, LeaderboardEntry, MasteryDistribution, ActivityLog, STATUS_LABELS, GRADE_LABELS } from '../types';
 import { storage } from '../services/storage';
 import { extractVocabularyFromText, extractVocabularyFromMedia, generateLearningPlan } from '../services/gemini';
-import { Play, BookOpen, Star, Loader2, Zap, BrainCircuit, Trophy, Plus, Sparkles, FileText, Image as ImageIcon, UploadCloud, Flame, Trash2, Settings, RefreshCw, User, Book, Calendar, Target, ArrowRight, Library, ChevronDown, ChevronUp, BarChart, Activity, Edit2, X, Check } from 'lucide-react';
+import { Play, BookOpen, Star, Loader2, Zap, BrainCircuit, Trophy, Plus, Sparkles, FileText, Image as ImageIcon, UploadCloud, Flame, Trash2, Settings, RefreshCw, User, Book, Calendar, Target, ArrowRight, Library, ChevronDown, ChevronUp, BarChart, Activity, Edit2, X, Check, Medal, Crown } from 'lucide-react';
 import Onboarding from './Onboarding';
 
 interface DashboardProps {
@@ -91,7 +91,7 @@ const BookCard: React.FC<BookCardProps> = ({ book, isMine, progress, onDelete, o
   );
 };
 
-const ActivityBarChart: React.FC<{ logs: ActivityLog[] }> = ({ logs }) => {
+const ActivityBarChart: React.FC<{ logs: ActivityLog[], dailyGoal?: number }> = ({ logs, dailyGoal = 20 }) => {
     const today = new Date();
     const DAYS_TO_SHOW = 7; 
     
@@ -112,51 +112,89 @@ const ActivityBarChart: React.FC<{ logs: ActivityLog[] }> = ({ logs }) => {
             date: dateStr,
             dayLabel: weekDays[d.getDay()],
             count: count,
-            isToday: i === 0
+            isToday: i === 0,
+            isGoalMet: count >= dailyGoal
         });
     }
 
-    if (maxCount < 10) maxCount = 10;
+    // Scale maxCount to accommodate goal line if needed
+    maxCount = Math.max(maxCount, dailyGoal * 1.2, 10);
+
+    // Calculate goal line position (%)
+    const goalPercent = Math.min(100, Math.round((dailyGoal / maxCount) * 100));
 
     return (
-        <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
+        <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm relative">
             <div className="flex items-center justify-between mb-6">
                 <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
                     <BarChart className="w-5 h-5 text-medace-500" /> 週間学習記録
                 </h3>
-                <div className="text-xs font-bold text-slate-400">
-                    直近7日間の合計: {logs.reduce((acc, l) => acc + l.count, 0)} 語
+                <div className="flex items-center gap-3">
+                    {dailyGoal > 0 && (
+                        <div className="flex items-center gap-1 text-xs font-bold text-slate-400">
+                            <div className="w-3 h-0 border-t-2 border-dashed border-slate-300"></div>
+                            目標: {dailyGoal}語
+                        </div>
+                    )}
+                    <div className="text-xs font-bold text-slate-400 bg-slate-50 px-2 py-1 rounded-md">
+                        7日間合計: {logs.reduce((acc, l) => acc + l.count, 0)} 語
+                    </div>
                 </div>
             </div>
             
-            <div className="w-full h-40 flex items-end justify-between gap-2 md:gap-4">
-                {chartData.map((data, idx) => {
-                    const heightPercent = Math.round((data.count / maxCount) * 100);
-                    return (
-                        <div key={data.date} className="flex flex-col items-center flex-1 group cursor-pointer relative">
-                            {/* Tooltip */}
-                            <div className="opacity-0 group-hover:opacity-100 absolute -top-8 bg-slate-800 text-white text-xs font-bold px-2 py-1 rounded transition-opacity whitespace-nowrap z-10">
-                                {data.count} 語
+            <div className="w-full h-40 relative">
+                {/* Goal Line */}
+                {dailyGoal > 0 && (
+                    <div 
+                        className="absolute w-full border-t-2 border-dashed border-slate-300 z-0 opacity-50 transition-all duration-500"
+                        style={{ bottom: `${goalPercent}%` }}
+                    ></div>
+                )}
+
+                <div className="absolute inset-0 flex items-end justify-between gap-2 md:gap-4 z-10">
+                    {chartData.map((data, idx) => {
+                        const heightPercent = Math.round((data.count / maxCount) * 100);
+                        return (
+                            <div key={data.date} className="flex flex-col items-center flex-1 group cursor-pointer relative h-full justify-end">
+                                {/* Tooltip */}
+                                <div className="opacity-0 group-hover:opacity-100 absolute -top-8 bg-slate-800 text-white text-xs font-bold px-2 py-1 rounded transition-opacity whitespace-nowrap z-20 pointer-events-none shadow-lg">
+                                    {data.count} 単語
+                                </div>
+                                
+                                {/* Bar */}
+                                <div className="w-full bg-slate-50 rounded-t-md relative flex items-end overflow-hidden transition-all duration-300 hover:bg-slate-100" style={{ height: '100%' }}>
+                                    <div 
+                                        className={`w-full rounded-t-md transition-all duration-1000 ease-out absolute bottom-0 ${
+                                            data.count === 0 ? 'bg-transparent' :
+                                            data.isGoalMet ? 'bg-gradient-to-t from-medace-500 to-medace-400' : 
+                                            data.isToday ? 'bg-slate-400' : 'bg-slate-300 group-hover:bg-slate-400'
+                                        }`}
+                                        style={{ height: `${heightPercent}%` }}
+                                    >
+                                        {data.isGoalMet && (
+                                            <div className="w-full h-full opacity-20 bg-white animate-pulse"></div>
+                                        )}
+                                    </div>
+                                </div>
+                                
+                                {/* Label */}
+                                <div className={`mt-2 text-xs font-bold ${data.isToday ? 'text-medace-600' : 'text-slate-400'}`}>
+                                    {data.dayLabel}
+                                </div>
                             </div>
-                            
-                            {/* Bar */}
-                            <div className="w-full bg-slate-100 rounded-t-md relative h-full flex items-end overflow-hidden">
-                                <div 
-                                    className={`w-full rounded-t-md transition-all duration-1000 ease-out ${data.isToday ? 'bg-medace-500' : 'bg-slate-300 group-hover:bg-medace-400'}`}
-                                    style={{ height: `${heightPercent}%` }}
-                                ></div>
-                            </div>
-                            
-                            {/* Label */}
-                            <div className={`mt-2 text-xs font-bold ${data.isToday ? 'text-medace-600' : 'text-slate-400'}`}>
-                                {data.dayLabel}
-                            </div>
-                        </div>
-                    );
-                })}
+                        );
+                    })}
+                </div>
             </div>
         </div>
     );
+};
+
+// Helper for League Calculation
+const getLeague = (level: number) => {
+    if (level >= 20) return { name: 'Gold', icon: <Crown className="w-3 h-3 fill-yellow-400 text-yellow-600" />, color: 'bg-yellow-50 text-yellow-700 border-yellow-200' };
+    if (level >= 10) return { name: 'Silver', icon: <Medal className="w-3 h-3 fill-slate-300 text-slate-500" />, color: 'bg-slate-100 text-slate-700 border-slate-200' };
+    return { name: 'Bronze', icon: <Medal className="w-3 h-3 fill-orange-300 text-orange-600" />, color: 'bg-orange-50 text-orange-800 border-orange-200' };
 };
 
 
@@ -217,7 +255,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onSelectBook }) => {
       return <Onboarding 
                 user={user} 
                 isRetake={true}
-                historySummary={`現在レベル: ${user.englishLevel || '未設定'}, 獲得XP: ${user.stats?.xp ?? 0}, 学年: ${GRADE_LABELS[user.grade || UserGrade.ADULT]}`}
+                historySummary={`Current Level: ${user.englishLevel}, XP: ${user.stats?.xp}, Grade: ${GRADE_LABELS[user.grade || UserGrade.ADULT]}`}
                 onComplete={(updated) => {
                     storage.updateSessionUser(updated); 
                     setShowOnboarding(false);
@@ -643,7 +681,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onSelectBook }) => {
 
       {/* SECTION: Analytics & Ranking & Status */}
       <div className="space-y-6">
-          <ActivityBarChart logs={activityLogs} />
+          <ActivityBarChart logs={activityLogs} dailyGoal={learningPlan?.dailyWordGoal} />
           
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               {/* Mastery Distribution */}
@@ -701,27 +739,34 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onSelectBook }) => {
                       <BarChart className="w-5 h-5 text-medace-500" /> XPランキング
                   </h3>
                   <div className="space-y-3">
-                      {leaderboard.map((entry, idx) => (
+                      {leaderboard.map((entry, idx) => {
+                          const league = getLeague(entry.level);
+                          return (
                           <div 
                             key={entry.uid} 
-                            className={`flex items-center justify-between p-3 rounded-lg border ${entry.isCurrentUser ? 'bg-medace-50 border-medace-200' : 'bg-white border-slate-100'}`}
+                            className={`flex items-center justify-between p-3 rounded-lg border transition-all hover:scale-[1.02] ${entry.isCurrentUser ? 'bg-medace-50 border-medace-200 shadow-sm' : 'bg-white border-slate-100'}`}
                           >
                               <div className="flex items-center gap-3">
                                   <div className={`w-6 h-6 flex items-center justify-center rounded-full text-xs font-bold ${idx === 0 ? 'bg-yellow-100 text-yellow-700' : idx === 1 ? 'bg-slate-100 text-slate-700' : idx === 2 ? 'bg-orange-50 text-orange-700' : 'text-slate-400'}`}>
                                       {entry.rank}
                                   </div>
                                   <div>
-                                      <div className={`text-sm font-bold ${entry.isCurrentUser ? 'text-medace-700' : 'text-slate-700'}`}>
-                                          {entry.displayName} {entry.isCurrentUser && '(あなた)'}
+                                      <div className={`text-sm font-bold flex items-center gap-2 ${entry.isCurrentUser ? 'text-medace-700' : 'text-slate-700'}`}>
+                                          {entry.displayName} {entry.isCurrentUser && <span className="text-[10px] bg-medace-200 text-medace-800 px-1.5 rounded">YOU</span>}
                                       </div>
-                                      <div className="text-[10px] text-slate-400">Lv.{entry.level}</div>
+                                      <div className="flex items-center gap-1.5 mt-0.5">
+                                          <div className={`text-[10px] px-1.5 py-0.5 rounded border flex items-center gap-1 ${league.color}`}>
+                                              {league.icon} {league.name}
+                                          </div>
+                                          <div className="text-[10px] text-slate-400">Lv.{entry.level}</div>
+                                      </div>
                                   </div>
                               </div>
                               <div className="text-sm font-bold text-slate-600">
-                                  {entry.xp} XP
+                                  {entry.xp} <span className="text-xs text-slate-400">XP</span>
                               </div>
                           </div>
-                      ))}
+                      )})}
                       {leaderboard.length === 0 && <p className="text-center text-slate-400 text-xs">ランキングデータなし</p>}
                   </div>
               </div>

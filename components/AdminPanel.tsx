@@ -233,7 +233,7 @@ const AdminPanel: React.FC = () => {
                             <Sparkles className="w-5 h-5 text-medace-600" />
                         </div>
                         <div>
-                            <h3 className="font-bold text-medace-900">Magic Material Creation</h3>
+                            <h3 className="font-bold text-medace-900">AI教材生成 (Magic Material Creation)</h3>
                             <p className="text-sm text-medace-700 mt-1">
                                 塾で使用しているプリント、長文問題、またはWeb記事のテキストを貼り付けてください。<br/>
                                 AIが自動的に学習すべき重要単語を抽出し、アプリ用教材に変換します。
@@ -346,7 +346,7 @@ const AdminPanel: React.FC = () => {
             {/* Console Log */}
             {log.length > 0 && (
                 <div className="mt-8 bg-slate-900 rounded-xl p-6 font-mono text-xs text-green-400 max-h-48 overflow-y-auto shadow-inner border border-slate-800">
-                    {log.map((l, i) => <div key={i} className="mb-1">{l}</div>)}
+                    {log.map((l, i) => <div key={i} className="mb-1">> {l}</div>)}
                 </div>
             )}
         </div>

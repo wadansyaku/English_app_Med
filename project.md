@@ -106,20 +106,3 @@ alter table public.books add column if not exists source_context text;
 -- 3. Add Reported Flag to Words
 alter table public.words add column if not exists is_reported boolean default false;
 ```
-
-## 9. System Analysis & Execution Plan (Sprint)
-
-### Current Implementation Highlights
-- **フロントエンド構成:** `App.tsx` を中心に `components/` 配下へ役割別のビュー（Dashboard/StudyMode/QuizMode/Admin/Instructor/Onboarding）を分割。`Layout.tsx` がHUDとナビゲーション、`Dashboard.tsx` がカードベースのホームを担う。
-- **データ/状態管理:** `services/storage.ts` に `IStorageService` 抽象とIndexedDB実装をまとめ、`getBookProgress` や `saveSRSHistory` でSRSデータを一元管理。`LearningPlan` は `PLANS` ストアで永続化される。
-- **AI連携:** `services/gemini.ts` がGemini/Imagenへのプロンプトを定義し、例文生成・診断テスト・可視化画像生成を司る。診断関連のプロンプトは約400行付近に集約。
-
-### Priority Plan (Aligned with `todo.md`)
-1) **UI Localization 拡充**
-   - `types.ts` の列挙値と `GRADE_LABELS/STATUS_LABELS` を起点に、`Dashboard.tsx`・`Onboarding.tsx`・`Layout.tsx` の文言を完全日本語化する。英語残存箇所（Curriculum/Progress等）を洗い出し、翻訳表を作成。
-2) **進捗ロジックの緩和**
-   - `services/storage.ts` の `getBookProgress` 計算を見直し、初回学習直後でも `percentage >= 1` となる安全幅を設定。`StudyMode.tsx` の学習完了時イベントと同期し、`Dashboard.tsx` の `progressMap` を即時更新する。
-3) **Dynamic Learning Plan 編集導線**
-   - 学習計画カード（`Dashboard.tsx` or `Onboarding.tsx`）に編集ボタンを追加し、`saveLearningPlan` を上書き保存対応へ拡張。対象ブック・日次目標の入力UXを簡素化し、バリデーションをフロント側で実施。
-4) **Diagnostic Test UX 強化**
-   - `Onboarding.tsx` にローディング/タイムアウトハンドリングを統一し、`services/gemini.ts` の診断プロンプトへ難易度バリエーションと学年連動の出題レンジを追加。診断後の `currentView` 遷移と `user.englishLevel` 更新をセットで行うルートをリグレッションテスト。
