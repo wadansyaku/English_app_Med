@@ -43,7 +43,7 @@ const PlanExperiencePanel: React.FC<PlanExperiencePanelProps> = ({
           </div>
           <h3 className="mt-4 text-2xl font-black tracking-tight text-slate-950">まずは無料で学習習慣を作る</h3>
           <p className="mt-3 text-sm leading-relaxed text-slate-600">
-            フリープランは自己学習を軽く始めるための入口です。広告表示でコストを抑えつつ、基本学習と小さなAI補助に絞ってテンポ良く使えます。
+            フリープランは自己学習を軽く始めるための入口です。広告表示でコストを抑えつつ、`Steady Study Original` の公式教材と小さなAI補助に絞ってテンポ良く使えます。
           </p>
           <div className="mt-5 grid gap-3 sm:grid-cols-3">
             <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4">
@@ -84,7 +84,7 @@ const PlanExperiencePanel: React.FC<PlanExperiencePanelProps> = ({
     const businessBenefits = [
       '広告なしで集中しやすい学習画面',
       '講師フォロー通知とグループ進行に対応',
-      '組織カリキュラムをそのまま学習導線へ反映',
+      'Steady Study Original とライセンス教材を運用に応じて配布',
     ];
 
     return (
@@ -111,7 +111,7 @@ const PlanExperiencePanel: React.FC<PlanExperiencePanelProps> = ({
             </div>
             <h3 className="mt-3 text-2xl font-black tracking-tight text-slate-950">グループ学習の流れで迷わない</h3>
             <p className="mt-3 text-sm leading-relaxed text-slate-600">
-              個人学習ではなく、教室や法人の学習運用に乗る体験です。教材・講師フォロー・学習プランが一枚の導線としてつながります。
+              個人学習ではなく、教室や法人の学習運用に乗る体験です。教材権限・講師フォロー・学習プランが一枚の導線としてつながります。
             </p>
 
             <div className="mt-5 grid gap-3 sm:grid-cols-3">
@@ -123,7 +123,7 @@ const PlanExperiencePanel: React.FC<PlanExperiencePanelProps> = ({
               <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4">
                 <div className="text-xs font-bold uppercase tracking-[0.16em] text-slate-400">対象教材</div>
                 <div className="mt-2 text-lg font-black text-slate-950">{plannedBookCount}冊</div>
-                <div className="mt-1 text-sm text-slate-500">組織カリキュラム反映</div>
+                <div className="mt-1 text-sm text-slate-500">原本教材とライセンス教材を反映</div>
               </div>
               <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4">
                 <div className="text-xs font-bold uppercase tracking-[0.16em] text-slate-400">利用環境</div>
@@ -142,6 +142,9 @@ const PlanExperiencePanel: React.FC<PlanExperiencePanelProps> = ({
                 </div>
               </div>
             ))}
+            <div className="rounded-3xl border border-dashed border-medace-200 bg-white px-4 py-4 text-sm leading-relaxed text-slate-600">
+              料金メモ: {accountOverview.pricingNote}
+            </div>
           </div>
         </div>
       </section>

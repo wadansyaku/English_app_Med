@@ -1,4 +1,4 @@
-import { OrganizationRole, UserRole } from '../../types';
+import { EnglishLevel, OrganizationRole, UserGrade, UserRole, UserStudyMode } from '../../types';
 import { clearSession, createSession, createUser, ensureDemoUser, findUserByEmail, mapUserRowToProfile, requireUser, verifyPassword, hashPassword } from '../_shared/auth';
 import { handleAiAction } from '../_shared/ai-actions';
 import { handleError, HttpError, json, noContent, readJson } from '../_shared/http';
@@ -21,15 +21,7 @@ interface ProfileBody {
     displayName?: string;
     grade?: string;
     englishLevel?: string;
-    subscriptionPlan?: string;
-    organizationName?: string;
-    organizationRole?: string;
-    stats?: {
-      xp?: number;
-      level?: number;
-      currentStreak?: number;
-      lastLoginDate?: string;
-    };
+    studyMode?: string;
   };
 }
 
@@ -38,6 +30,13 @@ const createJsonResponse = (data: unknown, init: ResponseInit = {}): Response =>
     return noContent(init);
   }
   return json(data, init);
+};
+
+const isEnumValue = <TEnum extends Record<string, string>>(
+  enumObject: TEnum,
+  value: unknown,
+): value is TEnum[keyof TEnum] => {
+  return typeof value === 'string' && Object.values(enumObject).includes(value as TEnum[keyof TEnum]);
 };
 
 const handleDemoLogin = async (env: AppEnv, request: Request, body: AuthBody): Promise<Response> => {
@@ -63,13 +62,17 @@ const handleDemoLogin = async (env: AppEnv, request: Request, body: AuthBody): P
 const handleEmailAuth = async (env: AppEnv, request: Request, body: AuthBody): Promise<Response> => {
   const email = String(body.email || '').trim().toLowerCase();
   const password = String(body.password || '');
-  const role = body.role || UserRole.STUDENT;
+  const requestedRole = body.role || UserRole.STUDENT;
 
   if (!email || !password) {
     throw new HttpError(400, 'メールアドレスとパスワードを入力してください。');
   }
 
   if (body.isSignUp) {
+    if (requestedRole !== UserRole.STUDENT) {
+      throw new HttpError(403, 'この登録導線では生徒アカウントのみ作成できます。');
+    }
+
     if (password.length < 6) {
       throw new HttpError(400, 'パスワードは6文字以上にしてください。');
     }
@@ -89,7 +92,7 @@ const handleEmailAuth = async (env: AppEnv, request: Request, body: AuthBody): P
       email,
       passwordHash,
       displayName,
-      role,
+      role: UserRole.STUDENT,
     });
 
     const sessionCookie = await createSession(env, request, user.id);
@@ -113,26 +116,30 @@ const handleProfileUpdate = async (env: AppEnv, request: Request): Promise<Respo
   const currentUser = await requireUser(env, request);
   const body = await readJson<ProfileBody>(request);
   const nextUser = body.user || {};
-  const stats = nextUser.stats || {};
-  const currentStats = mapUserRowToProfile(currentUser).stats;
+  const nextDisplayName =
+    typeof nextUser.displayName === 'string' && nextUser.displayName.trim()
+      ? nextUser.displayName.trim()
+      : currentUser.display_name;
+  const nextGrade = isEnumValue(UserGrade, nextUser.grade)
+    ? nextUser.grade
+    : currentUser.grade || null;
+  const nextEnglishLevel = isEnumValue(EnglishLevel, nextUser.englishLevel)
+    ? nextUser.englishLevel
+    : currentUser.english_level || null;
+  const nextStudyMode = isEnumValue(UserStudyMode, nextUser.studyMode)
+    ? nextUser.studyMode
+    : currentUser.study_mode || UserStudyMode.FOCUS;
 
   await env.DB.prepare(`
     UPDATE users
-    SET display_name = ?, grade = ?, english_level = ?, subscription_plan = ?, organization_name = ?, organization_role = ?,
-        stats_xp = ?, stats_level = ?, stats_current_streak = ?, stats_last_login_date = ?,
+    SET display_name = ?, grade = ?, english_level = ?, study_mode = ?,
         updated_at = ?
     WHERE id = ?
   `).bind(
-    (nextUser.displayName || currentUser.display_name).trim(),
-    nextUser.grade || currentUser.grade || null,
-    nextUser.englishLevel || currentUser.english_level || null,
-    nextUser.subscriptionPlan || currentUser.subscription_plan || null,
-    nextUser.organizationName || currentUser.organization_name || null,
-    nextUser.organizationRole || currentUser.organization_role || null,
-    stats.xp ?? currentStats?.xp ?? currentUser.stats_xp ?? 0,
-    stats.level ?? currentStats?.level ?? currentUser.stats_level ?? 1,
-    stats.currentStreak ?? currentStats?.currentStreak ?? currentUser.stats_current_streak ?? 0,
-    stats.lastLoginDate ?? currentStats?.lastLoginDate ?? currentUser.stats_last_login_date ?? '',
+    nextDisplayName,
+    nextGrade,
+    nextEnglishLevel,
+    nextStudyMode,
     Date.now(),
     currentUser.id
   ).run();
@@ -149,8 +156,8 @@ export const onRequest = async (context: { request: Request; env: AppEnv; }): Pr
 
     if (pathname === 'auth' && request.method === 'POST') {
       const body = await readJson<AuthBody>(request);
-      if (body.action === 'demo-login') return handleDemoLogin(env, request, body);
-      if (body.action === 'email-auth') return handleEmailAuth(env, request, body);
+      if (body.action === 'demo-login') return await handleDemoLogin(env, request, body);
+      if (body.action === 'email-auth') return await handleEmailAuth(env, request, body);
       throw new HttpError(404, '未知の認証操作です。');
     }
 
@@ -165,7 +172,7 @@ export const onRequest = async (context: { request: Request; env: AppEnv; }): Pr
     }
 
     if (pathname === 'profile' && request.method === 'POST') {
-      return handleProfileUpdate(env, request);
+      return await handleProfileUpdate(env, request);
     }
 
     if (pathname === 'storage' && request.method === 'POST') {

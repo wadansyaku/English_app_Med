@@ -2,15 +2,28 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 const args = process.argv.slice(2);
-const remoteMode = args.includes('--remote');
 const DEFAULT_EXCLUDED_BOOKS = new Set(['TOEFLテスト英単語3800']);
+const DEFAULT_LICENSED_INPUT = '/Users/Yodai/projects/language_database_2_2/output_curated/20260208_225334/MASTER_DATABASE_REFINED.csv';
+const DEFAULT_ORIGINAL_INPUT = '/Users/Yodai/projects/NanjyoEnglishApp/docs/wordbank_pos_audit/20260208_225334/ORIGINAL_WORDBANK_JHS_HS_FINAL_CONFIRMED.csv';
+const DEFAULT_OUTPUT = './tmp/d1-seed.sql';
+const DEFAULT_CATALOG_SOURCE = 'LICENSED_PARTNER';
+const DEFAULT_ACCESS_SCOPE = 'BUSINESS_ONLY';
 
 const excludedBooks = new Set(DEFAULT_EXCLUDED_BOOKS);
 const positionalArgs = [];
+const originalCsvs = [];
+const licensedCsvs = [];
+const genericInputs = [];
+let remoteMode = false;
+let fallbackCatalogSource = DEFAULT_CATALOG_SOURCE;
+let fallbackAccessScope = DEFAULT_ACCESS_SCOPE;
 
 for (let index = 0; index < args.length; index += 1) {
   const value = args[index];
-  if (value === '--remote') continue;
+  if (value === '--remote') {
+    remoteMode = true;
+    continue;
+  }
   if (value === '--exclude-book') {
     const bookName = args[index + 1];
     if (!bookName) {
@@ -20,12 +33,93 @@ for (let index = 0; index < args.length; index += 1) {
     index += 1;
     continue;
   }
+  if (value === '--catalog-source') {
+    fallbackCatalogSource = args[index + 1] || DEFAULT_CATALOG_SOURCE;
+    index += 1;
+    continue;
+  }
+  if (value === '--access-scope') {
+    fallbackAccessScope = args[index + 1] || DEFAULT_ACCESS_SCOPE;
+    index += 1;
+    continue;
+  }
+  if (value === '--original-csv') {
+    const csvPath = args[index + 1];
+    if (!csvPath) {
+      throw new Error('--original-csv requires a file path');
+    }
+    originalCsvs.push(path.resolve(csvPath));
+    index += 1;
+    continue;
+  }
+  if (value === '--licensed-csv') {
+    const csvPath = args[index + 1];
+    if (!csvPath) {
+      throw new Error('--licensed-csv requires a file path');
+    }
+    licensedCsvs.push(path.resolve(csvPath));
+    index += 1;
+    continue;
+  }
+  if (value === '--input') {
+    const csvPath = args[index + 1];
+    if (!csvPath) {
+      throw new Error('--input requires a file path');
+    }
+    genericInputs.push(path.resolve(csvPath));
+    index += 1;
+    continue;
+  }
   positionalArgs.push(value);
 }
 
-const DEFAULT_INPUT = '/Users/Yodai/projects/language_database_2_2/output_curated/20260208_225334/MASTER_DATABASE_REFINED.csv';
-const inputPath = path.resolve(positionalArgs[0] || DEFAULT_INPUT);
-const outputPath = path.resolve(positionalArgs[1] || './tmp/d1-seed.sql');
+const datasets = [];
+let outputPath = path.resolve(DEFAULT_OUTPUT);
+
+if (originalCsvs.length === 0 && licensedCsvs.length === 0 && genericInputs.length === 0) {
+  datasets.push({
+    inputPath: path.resolve(positionalArgs[0] || DEFAULT_LICENSED_INPUT),
+    catalogSource: fallbackCatalogSource,
+    accessScope: fallbackAccessScope,
+  });
+  outputPath = path.resolve(positionalArgs[1] || DEFAULT_OUTPUT);
+} else {
+  originalCsvs.forEach((inputPath) => {
+    datasets.push({
+      inputPath,
+      catalogSource: 'STEADY_STUDY_ORIGINAL',
+      accessScope: 'ALL_PLANS',
+    });
+  });
+  licensedCsvs.forEach((inputPath) => {
+    datasets.push({
+      inputPath,
+      catalogSource: 'LICENSED_PARTNER',
+      accessScope: 'BUSINESS_ONLY',
+    });
+  });
+  genericInputs.forEach((inputPath) => {
+    datasets.push({
+      inputPath,
+      catalogSource: fallbackCatalogSource,
+      accessScope: fallbackAccessScope,
+    });
+  });
+
+  if (datasets.length === 0) {
+    datasets.push({
+      inputPath: path.resolve(DEFAULT_LICENSED_INPUT),
+      catalogSource: DEFAULT_CATALOG_SOURCE,
+      accessScope: DEFAULT_ACCESS_SCOPE,
+    });
+  }
+
+  if (positionalArgs.length > 1) {
+    throw new Error('When using --original-csv / --licensed-csv / --input, only the output path may be positional.');
+  }
+
+  outputPath = path.resolve(positionalArgs[0] || DEFAULT_OUTPUT);
+}
 
 const slugifySegment = (value) => value
   .normalize('NFKC')
@@ -44,9 +138,9 @@ const hashString = (value) => {
   return (hash >>> 0).toString(36);
 };
 
-const createBookId = (bookName) => {
+const createBookId = (bookName, catalogSource) => {
   const slug = slugifySegment(bookName) || 'book';
-  return `${slug}-${hashString(`official:${bookName}`)}`;
+  return `${slug}-${hashString(`official:${catalogSource}:${bookName}`)}`;
 };
 
 const parseCsv = (content) => {
@@ -121,40 +215,92 @@ const sqlValue = (value) => {
   return `'${String(value).replace(/'/g, "''")}'`;
 };
 
-const content = await fs.readFile(inputPath, 'utf8');
-const rows = parseCsv(content);
+const getDatasetLabel = (catalogSource) => {
+  if (catalogSource === 'STEADY_STUDY_ORIGINAL') return 'Steady Study Original';
+  if (catalogSource === 'LICENSED_PARTNER') return 'Licensed Partner Catalog';
+  return 'Imported Catalog';
+};
 
-if (rows.length === 0) {
-  throw new Error(`No rows found in ${inputPath}`);
-}
+const getFormat = (rows) => {
+  const sample = rows[0] || {};
+  if ('headword' in sample || 'meaning_ja_short' in sample) {
+    return 'ORIGINAL_WORDBANK';
+  }
+  return 'BOOK_CSV';
+};
 
 const grouped = new Map();
-rows.forEach((row, index) => {
-  const bookName = row['単語帳名'] || row['BookName'] || row['book_name'] || 'Imported';
-  if (excludedBooks.has(bookName)) return;
-  const word = (row['単語'] || row['Word'] || '').trim();
-  const definition = (row['日本語訳'] || row['Meaning'] || '').trim();
-  if (!word || !definition) return;
+let totalImportedWords = 0;
 
-  if (!grouped.has(bookName)) {
-    grouped.set(bookName, {
-      id: createBookId(bookName),
-      title: bookName,
-      words: [],
-    });
+for (const dataset of datasets) {
+  const content = await fs.readFile(dataset.inputPath, 'utf8');
+  const rows = parseCsv(content);
+
+  if (rows.length === 0) {
+    throw new Error(`No rows found in ${dataset.inputPath}`);
   }
 
-  const group = grouped.get(bookName);
-  const number = Number.parseInt(row['単語番号'] || row['Number'] || String(group.words.length + 1), 10) || group.words.length + 1;
-  group.words.push({
-    id: `${group.id}_${number}_${index}`,
-    bookId: group.id,
-    number,
-    word,
-    definition,
-    searchKey: word.toLowerCase(),
+  const format = getFormat(rows);
+  const datasetLabel = getDatasetLabel(dataset.catalogSource);
+  const inputBasename = path.basename(dataset.inputPath);
+
+  rows.forEach((row, index) => {
+    const isOriginalWordbank = format === 'ORIGINAL_WORDBANK';
+    const bookName = isOriginalWordbank
+      ? (row['grade_bucket_default_label'] || row['stage_label'] || `${datasetLabel} Imported`).trim()
+      : (row['単語帳名'] || row['BookName'] || row['book_name'] || 'Imported').trim();
+    if (!bookName || excludedBooks.has(bookName)) return;
+
+    const word = isOriginalWordbank
+      ? (row['headword'] || row['headword_norm'] || '').trim()
+      : (row['単語'] || row['Word'] || '').trim();
+    const definition = isOriginalWordbank
+      ? (row['meaning_ja_short'] || row['meaning_ja'] || '').trim()
+      : (row['日本語訳'] || row['Meaning'] || '').trim();
+    if (!word || !definition) return;
+
+    const groupKey = `${dataset.catalogSource}:${bookName}`;
+    if (!grouped.has(groupKey)) {
+      grouped.set(groupKey, {
+        id: createBookId(bookName, dataset.catalogSource),
+        title: bookName,
+        catalogSource: dataset.catalogSource,
+        accessScope: dataset.accessScope,
+        description: isOriginalWordbank
+          ? `Nanjyo English App のオリジナル単語データベースを ${bookName} 向けに再編成`
+          : `${datasetLabel} として ${inputBasename} から投入`,
+        sourceContext: isOriginalWordbank
+          ? `Nanjyo English App / ${row['stage_label'] || 'Original Wordbank'}`
+          : inputBasename,
+        sortOrder: isOriginalWordbank
+          ? Number.parseInt(row['grade_bucket_default_order'] || row['group_order'] || String(grouped.size + 1), 10) || grouped.size + 1
+          : grouped.size + 1,
+        words: [],
+      });
+    }
+
+    const group = grouped.get(groupKey);
+    const number = group.words.length + 1;
+    const searchKey = isOriginalWordbank
+      ? (row['headword_norm'] || word).trim().toLowerCase()
+      : word.toLowerCase();
+    const wordIdSuffix = row['entry_id'] || row['source_primary_number'] || row['単語番号'] || number;
+
+    group.words.push({
+      id: `${group.id}_${wordIdSuffix}_${index}`,
+      bookId: group.id,
+      number,
+      word,
+      definition,
+      searchKey,
+    });
+    totalImportedWords += 1;
   });
-});
+}
+
+if (grouped.size === 0 || totalImportedWords === 0) {
+  throw new Error('No importable rows were found after filtering.');
+}
 
 const now = Date.now();
 const lines = [
@@ -169,9 +315,12 @@ if (!remoteMode) {
   lines.splice(1, 0, 'BEGIN TRANSACTION;');
 }
 
-for (const group of grouped.values()) {
+for (const group of [...grouped.values()].sort((left, right) => {
+  if (left.sortOrder !== right.sortOrder) return left.sortOrder - right.sortOrder;
+  return left.title.localeCompare(right.title, 'ja');
+})) {
   lines.push(
-    `INSERT INTO books (id, title, word_count, is_priority, description, source_context, created_by, created_at, updated_at) VALUES (${sqlValue(group.id)}, ${sqlValue(group.title)}, ${group.words.length}, ${/duo/i.test(group.title) ? 1 : 0}, ${sqlValue('Imported from MASTER_DATABASE_REFINED.csv')}, NULL, NULL, ${now}, ${now});`
+    `INSERT INTO books (id, title, word_count, is_priority, description, source_context, created_by, catalog_source, access_scope, created_at, updated_at) VALUES (${sqlValue(group.id)}, ${sqlValue(group.title)}, ${group.words.length}, ${/duo/i.test(group.title) ? 1 : 0}, ${sqlValue(group.description)}, ${sqlValue(group.sourceContext)}, NULL, ${sqlValue(group.catalogSource)}, ${sqlValue(group.accessScope)}, ${now}, ${now});`
   );
 
   group.words.forEach((word) => {
@@ -192,4 +341,5 @@ console.log(`Generated ${outputPath}`);
 console.log(`Books: ${grouped.size}`);
 console.log(`Words: ${Array.from(grouped.values()).reduce((sum, group) => sum + group.words.length, 0)}`);
 console.log(`Mode: ${remoteMode ? 'remote' : 'local'}`);
+console.log(`Datasets: ${datasets.map((dataset) => `${path.basename(dataset.inputPath)} [${dataset.catalogSource}/${dataset.accessScope}]`).join(', ')}`);
 console.log(`Excluded books: ${Array.from(excludedBooks).join(', ') || '(none)'}`);

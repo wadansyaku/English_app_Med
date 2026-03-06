@@ -1,5 +1,31 @@
 
-import { WordData, BookMetadata, LearningHistory, BookProgress, UserProfile, UserStats, StudentSummary, StudentRiskLevel, UserRole, LearningPlan, LeaderboardEntry, MasteryDistribution, ActivityLog, DashboardSnapshot, SubscriptionPlan, AdminDashboardSnapshot, OrganizationDashboardSnapshot, OrganizationRole, StudentWorksheetSnapshot } from '../types';
+import {
+  ActivityLog,
+  AdminDashboardSnapshot,
+  BookAccessScope,
+  BookCatalogSource,
+  BookMetadata,
+  BookProgress,
+  DashboardSnapshot,
+  EnglishLevel,
+  LeaderboardEntry,
+  LearningHistory,
+  LearningPlan,
+  LearningPreference,
+  LearningPreferenceIntensity,
+  MasteryDistribution,
+  OrganizationDashboardSnapshot,
+  OrganizationRole,
+  StudentRiskLevel,
+  StudentSummary,
+  StudentWorksheetSnapshot,
+  SubscriptionPlan,
+  UserGrade,
+  UserProfile,
+  UserRole,
+  UserStats,
+  WordData,
+} from '../types';
 import { getSubscriptionPolicy } from '../config/subscription';
 import { CloudflareStorageService } from './cloudflare';
 
@@ -12,7 +38,17 @@ export interface IStorageService {
   getSession(): Promise<UserProfile | null>;
   addXP(user: UserProfile, amount: number): Promise<{ user: UserProfile, leveledUp: boolean }>;
   
-  batchImportWords(defaultBookName: string, csvRows: any[], onProgress: (progress: number) => void, createdByUid?: string, contextSummary?: string): Promise<void>;
+  batchImportWords(
+    defaultBookName: string,
+    csvRows: any[],
+    onProgress: (progress: number) => void,
+    createdByUid?: string,
+    contextSummary?: string,
+    options?: {
+      catalogSource?: BookCatalogSource;
+      accessScope?: BookAccessScope;
+    }
+  ): Promise<void>;
   getBooks(): Promise<BookMetadata[]>;
   deleteBook(bookId: string): Promise<void>; 
   
@@ -38,6 +74,9 @@ export interface IStorageService {
   // Plan
   saveLearningPlan(plan: LearningPlan): Promise<void>;
   getLearningPlan(uid: string): Promise<LearningPlan | null>;
+  saveLearningPreference(preference: LearningPreference): Promise<void>;
+  getLearningPreference(uid: string): Promise<LearningPreference | null>;
+  assignStudentInstructor(studentUid: string, instructorUid: string | null): Promise<void>;
 
   // Analytics & Social
   getDashboardSnapshot(uid: string): Promise<DashboardSnapshot>;
@@ -49,13 +88,15 @@ export interface IStorageService {
 }
 
 const DB_NAME = 'MedAceDB';
-const DB_VERSION = 2; // Increment for new stores if needed (IDB)
+const DB_VERSION = 4;
 const STORES = {
   BOOKS: 'books',
   WORDS: 'words',
   HISTORY: 'history',
   SESSION: 'session',
-  PLANS: 'plans' // New store
+  PLANS: 'plans',
+  PREFERENCES: 'preferences',
+  ASSIGNMENTS: 'assignments',
 };
 
 // Mocks
@@ -65,6 +106,8 @@ const IDB_MOCK_USERS: UserProfile[] = [
     displayName: '鈴木 健太',
     role: UserRole.STUDENT,
     email: 'kenta@medace.com',
+    grade: UserGrade.JHS2,
+    englishLevel: EnglishLevel.A2,
     subscriptionPlan: SubscriptionPlan.TOC_FREE,
     stats: { xp: 1250, level: 12, currentStreak: 5, lastLoginDate: '2023-10-27' }
   },
@@ -74,8 +117,10 @@ const IDB_MOCK_USERS: UserProfile[] = [
     role: UserRole.STUDENT,
     organizationRole: OrganizationRole.STUDENT,
     email: 'sota@demo-school.jp',
+    grade: UserGrade.JHS3,
+    englishLevel: EnglishLevel.B1,
     subscriptionPlan: SubscriptionPlan.TOB_PAID,
-    organizationName: 'MedAce Demo Academy',
+    organizationName: 'Steady Study Demo Academy',
     stats: { xp: 820, level: 8, currentStreak: 3, lastLoginDate: '2023-10-27' }
   },
   {
@@ -85,7 +130,7 @@ const IDB_MOCK_USERS: UserProfile[] = [
     organizationRole: OrganizationRole.INSTRUCTOR,
     email: 'oak@medace.com',
     subscriptionPlan: SubscriptionPlan.TOB_PAID,
-    organizationName: 'MedAce Demo Academy'
+    organizationName: 'Steady Study Demo Academy'
   },
   {
     uid: 'mock-group-admin-001',
@@ -94,7 +139,7 @@ const IDB_MOCK_USERS: UserProfile[] = [
     organizationRole: OrganizationRole.GROUP_ADMIN,
     email: 'manager@medace-demo.jp',
     subscriptionPlan: SubscriptionPlan.TOB_PAID,
-    organizationName: 'MedAce Demo Academy'
+    organizationName: 'Steady Study Demo Academy'
   },
   {
     uid: 'mock-admin-001',
@@ -102,7 +147,7 @@ const IDB_MOCK_USERS: UserProfile[] = [
     role: UserRole.ADMIN,
     email: 'admin@medace.com',
     subscriptionPlan: SubscriptionPlan.TOB_PAID,
-    organizationName: 'MedAce HQ'
+    organizationName: 'Steady Study HQ'
   }
 ];
 
@@ -144,6 +189,40 @@ const calculatePercentage = (learned: number, total: number): number => {
 };
 
 const WORKSHEET_STATUSES: Array<StudentWorksheetSnapshot['words'][number]['status']> = ['graduated', 'review', 'learning'];
+const DEFAULT_LEARNING_PREFERENCE = (userUid: string): LearningPreference => ({
+  userUid,
+  targetExam: '',
+  targetScore: '',
+  examDate: '',
+  weeklyStudyDays: 4,
+  dailyStudyMinutes: 20,
+  weakSkillFocus: '',
+  motivationNote: '',
+  intensity: LearningPreferenceIntensity.BALANCED,
+  updatedAt: Date.now(),
+});
+
+const IDB_MOCK_ASSIGNMENTS = [
+  { studentUid: 'student-biz-1', instructorUid: 'mock-instructor-001' },
+  { studentUid: 'student-biz-2', instructorUid: 'mock-instructor-001' },
+];
+
+const canAccessOfficialBook = (plan: SubscriptionPlan | undefined, book: BookMetadata): boolean => {
+  if (book.catalogSource === BookCatalogSource.USER_GENERATED) return false;
+  if ((book.accessScope || BookAccessScope.ALL_PLANS) === BookAccessScope.ALL_PLANS) return true;
+  return plan === SubscriptionPlan.TOB_PAID;
+};
+
+const isBookOwnedByUser = (book: BookMetadata, userUid: string | undefined): boolean => {
+  if (!userUid) return false;
+  try {
+    if (book.description?.includes(userUid)) return true;
+    const parsed = JSON.parse(book.description || '{}') as { createdBy?: string };
+    return parsed.createdBy === userUid;
+  } catch {
+    return false;
+  }
+};
 
 class IndexedDBStorageService implements IStorageService {
   private dbPromise: Promise<IDBDatabase>;
@@ -166,6 +245,8 @@ class IndexedDBStorageService implements IStorageService {
         if (!db.objectStoreNames.contains(STORES.HISTORY)) db.createObjectStore(STORES.HISTORY, { keyPath: 'id' });
         if (!db.objectStoreNames.contains(STORES.SESSION)) db.createObjectStore(STORES.SESSION, { keyPath: 'key' });
         if (!db.objectStoreNames.contains(STORES.PLANS)) db.createObjectStore(STORES.PLANS, { keyPath: 'uid' });
+        if (!db.objectStoreNames.contains(STORES.PREFERENCES)) db.createObjectStore(STORES.PREFERENCES, { keyPath: 'userUid' });
+        if (!db.objectStoreNames.contains(STORES.ASSIGNMENTS)) db.createObjectStore(STORES.ASSIGNMENTS, { keyPath: 'studentUid' });
       };
       request.onsuccess = (event) => resolve((event.target as IDBOpenDBRequest).result);
     });
@@ -256,7 +337,17 @@ class IndexedDBStorageService implements IStorageService {
     return { user: updatedUser, leveledUp };
   }
 
-  async batchImportWords(defaultBookName: string, csvRows: any[], onProgress: (progress: number) => void, createdByUid?: string, contextSummary?: string): Promise<void> {
+  async batchImportWords(
+    defaultBookName: string,
+    csvRows: any[],
+    onProgress: (progress: number) => void,
+    createdByUid?: string,
+    contextSummary?: string,
+    options?: {
+      catalogSource?: BookCatalogSource;
+      accessScope?: BookAccessScope;
+    }
+  ): Promise<void> {
     const db = await this.dbPromise;
     const bookGroups = new Map<string, { meta: BookMetadata, words: WordData[] }>();
     const total = csvRows.length;
@@ -285,7 +376,13 @@ class IndexedDBStorageService implements IStorageService {
                     wordCount: 0, 
                     isPriority: !createdByUid && bookName.includes("DUO"), 
                     description: desc,
-                    sourceContext: contextSummary // Save Context
+                    sourceContext: contextSummary,
+                    catalogSource: createdByUid
+                      ? BookCatalogSource.USER_GENERATED
+                      : (options?.catalogSource || BookCatalogSource.LICENSED_PARTNER),
+                    accessScope: createdByUid
+                      ? BookAccessScope.ALL_PLANS
+                      : (options?.accessScope || BookAccessScope.BUSINESS_ONLY),
                 },
                 words: []
             });
@@ -311,9 +408,18 @@ class IndexedDBStorageService implements IStorageService {
 
   async getBooks(): Promise<BookMetadata[]> {
     const store = await this.getStore(STORES.BOOKS);
+    const sessionUser = await this.getSession();
     return new Promise((resolve) => {
       const request = store.getAll();
-      request.onsuccess = () => resolve(request.result || []);
+      request.onsuccess = () => {
+        const books = (request.result || []) as BookMetadata[];
+        resolve(
+          books.filter((book) =>
+            isBookOwnedByUser(book, sessionUser?.uid) ||
+            canAccessOfficialBook(sessionUser?.subscriptionPlan, book)
+          )
+        );
+      };
     });
   }
   
@@ -553,22 +659,46 @@ class IndexedDBStorageService implements IStorageService {
 
   async getAllStudentsProgress(): Promise<StudentSummary[]> {
     const sessionUser = await this.getSession();
+    const assignmentStore = await this.getStore(STORES.ASSIGNMENTS);
+    const assignments = await new Promise<Array<{ studentUid: string; instructorUid: string | null }>>((resolve) => {
+      const request = assignmentStore.getAll();
+      request.onsuccess = () => resolve((request.result || []) as Array<{ studentUid: string; instructorUid: string | null }>);
+      request.onerror = () => resolve([]);
+    });
+    const mergedAssignments = new Map<string, string | null>(
+      [...IDB_MOCK_ASSIGNMENTS, ...assignments].map((entry) => [entry.studentUid, entry.instructorUid])
+    );
+
     const allStudents: StudentSummary[] = [
-      { uid: 'student-free-1', name: '鈴木 健太', email: 'kenta@medace.com', totalLearned: 150, totalAttempts: 300, lastActive: Date.now(), riskLevel: StudentRiskLevel.SAFE, accuracy: 0.85, subscriptionPlan: SubscriptionPlan.TOC_FREE },
-      { uid: 'student-biz-1', name: '黒田 颯太', email: 'sota@demo-school.jp', totalLearned: 96, totalAttempts: 130, lastActive: Date.now() - 86400000, riskLevel: StudentRiskLevel.WARNING, accuracy: 0.76, subscriptionPlan: SubscriptionPlan.TOB_PAID, organizationName: 'MedAce Demo Academy', lastNotificationAt: Date.now() - 86400000, lastNotificationMessage: 'Oak先生より: 昨日の復習を10語だけ戻しましょう。' },
-      { uid: 'student-biz-2', name: '田中 陽葵', email: 'hina@demo-school.jp', totalLearned: 45, totalAttempts: 60, lastActive: Date.now() - 86400000 * 4, riskLevel: StudentRiskLevel.DANGER, accuracy: 0.60, subscriptionPlan: SubscriptionPlan.TOB_PAID, organizationName: 'MedAce Demo Academy', lastNotificationAt: Date.now() - 86400000, lastNotificationMessage: 'Oak先生より: 2日空いたので、まずは10語だけ復習しましょう。' },
-      { uid: 'student-biz-3', name: '森 結月', email: 'yuzuki@demo-school.jp', totalLearned: 188, totalAttempts: 240, lastActive: Date.now(), riskLevel: StudentRiskLevel.SAFE, accuracy: 0.88, subscriptionPlan: SubscriptionPlan.TOB_PAID, organizationName: 'MedAce Demo Academy' }
+      { uid: 'student-free-1', name: '鈴木 健太', email: 'kenta@medace.com', totalLearned: 150, totalAttempts: 300, lastActive: Date.now(), riskLevel: StudentRiskLevel.SAFE, accuracy: 0.85, subscriptionPlan: SubscriptionPlan.TOC_FREE, hasLearningPlan: true, riskReasons: ['直近7日で安定して学習'], recommendedAction: '称賛して現状維持' },
+      { uid: 'student-biz-1', name: '黒田 颯太', email: 'sota@demo-school.jp', totalLearned: 96, totalAttempts: 130, lastActive: Date.now() - 86400000, riskLevel: StudentRiskLevel.WARNING, accuracy: 0.76, subscriptionPlan: SubscriptionPlan.TOB_PAID, organizationName: 'Steady Study Demo Academy', lastNotificationAt: Date.now() - 86400000, lastNotificationMessage: 'Oak先生より: 昨日の復習を10語だけ戻しましょう。', hasLearningPlan: true, riskReasons: ['1日学習が空いている', '復習を先に戻したい段階'], recommendedAction: '復習10語の再開を促す' },
+      { uid: 'student-biz-2', name: '田中 陽葵', email: 'hina@demo-school.jp', totalLearned: 45, totalAttempts: 60, lastActive: Date.now() - 86400000 * 4, riskLevel: StudentRiskLevel.DANGER, accuracy: 0.60, subscriptionPlan: SubscriptionPlan.TOB_PAID, organizationName: 'Steady Study Demo Academy', lastNotificationAt: Date.now() - 86400000, lastNotificationMessage: 'Oak先生より: 2日空いたので、まずは10語だけ復習しましょう。', hasLearningPlan: false, riskReasons: ['3日以上学習が停止', '正答率が60%台', '学習プラン未設定'], recommendedAction: '担当講師が短い再開タスクを指定' },
+      { uid: 'student-biz-3', name: '森 結月', email: 'yuzuki@demo-school.jp', totalLearned: 188, totalAttempts: 240, lastActive: Date.now(), riskLevel: StudentRiskLevel.SAFE, accuracy: 0.88, subscriptionPlan: SubscriptionPlan.TOB_PAID, organizationName: 'Steady Study Demo Academy', hasLearningPlan: true, riskReasons: ['高い正答率で安定'], recommendedAction: '次の教材へ拡張' }
     ];
 
+    const withAssignments = allStudents.map((student) => {
+      const assignedInstructorUid = mergedAssignments.get(student.uid) || undefined;
+      const assignedInstructor = IDB_MOCK_USERS.find((user) => user.uid === assignedInstructorUid);
+      return {
+        ...student,
+        assignedInstructorUid,
+        assignedInstructorName: assignedInstructor?.displayName,
+      };
+    });
+
     if (sessionUser?.role === UserRole.ADMIN) {
-      return allStudents;
+      return withAssignments;
     }
 
     if (sessionUser?.organizationName) {
-      return allStudents.filter((student) => student.organizationName === sessionUser.organizationName);
+      const orgStudents = withAssignments.filter((student) => student.organizationName === sessionUser.organizationName);
+      if (sessionUser.organizationRole === OrganizationRole.GROUP_ADMIN) {
+        return orgStudents;
+      }
+      return orgStudents.filter((student) => !student.assignedInstructorUid || student.assignedInstructorUid === sessionUser.uid);
     }
 
-    return allStudents.filter((student) => !student.organizationName);
+    return withAssignments.filter((student) => !student.organizationName);
   }
 
   async getStudentWorksheetSnapshot(studentUid: string): Promise<StudentWorksheetSnapshot> {
@@ -651,12 +781,14 @@ class IndexedDBStorageService implements IStorageService {
 
   async resetAllData(): Promise<void> {
       const db = await this.dbPromise;
-      const tx = db.transaction([STORES.BOOKS, STORES.WORDS, STORES.HISTORY, STORES.SESSION, STORES.PLANS], 'readwrite');
+      const tx = db.transaction([STORES.BOOKS, STORES.WORDS, STORES.HISTORY, STORES.SESSION, STORES.PLANS, STORES.PREFERENCES, STORES.ASSIGNMENTS], 'readwrite');
       tx.objectStore(STORES.BOOKS).clear();
       tx.objectStore(STORES.WORDS).clear();
       tx.objectStore(STORES.HISTORY).clear();
       tx.objectStore(STORES.SESSION).clear();
       tx.objectStore(STORES.PLANS).clear();
+      tx.objectStore(STORES.PREFERENCES).clear();
+      tx.objectStore(STORES.ASSIGNMENTS).clear();
       return new Promise(r => { tx.oncomplete = () => r(); });
   }
 
@@ -672,6 +804,29 @@ class IndexedDBStorageService implements IStorageService {
           req.onsuccess = () => resolve(req.result || null);
           req.onerror = () => resolve(null);
       });
+  }
+
+  async saveLearningPreference(preference: LearningPreference): Promise<void> {
+      const store = await this.getStore(STORES.PREFERENCES, 'readwrite');
+      store.put({ ...preference, updatedAt: Date.now() });
+  }
+
+  async getLearningPreference(uid: string): Promise<LearningPreference | null> {
+      const store = await this.getStore(STORES.PREFERENCES);
+      return new Promise((resolve) => {
+          const req = store.get(uid);
+          req.onsuccess = () => resolve(req.result || DEFAULT_LEARNING_PREFERENCE(uid));
+          req.onerror = () => resolve(DEFAULT_LEARNING_PREFERENCE(uid));
+      });
+  }
+
+  async assignStudentInstructor(studentUid: string, instructorUid: string | null): Promise<void> {
+      const store = await this.getStore(STORES.ASSIGNMENTS, 'readwrite');
+      if (!instructorUid) {
+          store.delete(studentUid);
+          return;
+      }
+      store.put({ studentUid, instructorUid });
   }
 
   async getDashboardSnapshot(uid: string): Promise<DashboardSnapshot> {
@@ -693,18 +848,21 @@ class IndexedDBStorageService implements IStorageService {
           else official.push(book);
       });
 
-      official.sort((a, b) => (a.isPriority === b.isPriority ? a.title.localeCompare(b.title) : a.isPriority ? -1 : 1));
+      const accessibleOfficial = official.filter((book) => canAccessOfficialBook(sessionUser?.subscriptionPlan, book));
+
+      accessibleOfficial.sort((a, b) => (a.isPriority === b.isPriority ? a.title.localeCompare(b.title) : a.isPriority ? -1 : 1));
       mine.sort((a, b) => b.id.localeCompare(a.id));
 
-      const progressResults = await Promise.all([...official, ...mine].map((book) => this.getBookProgress(uid, book.id)));
+      const progressResults = await Promise.all([...accessibleOfficial, ...mine].map((book) => this.getBookProgress(uid, book.id)));
       const progressMap: Record<string, BookProgress> = {};
       progressResults.forEach((progress) => {
           progressMap[progress.bookId] = progress;
       });
 
-      const [dueCount, learningPlan, leaderboard, masteryDist, activityLogs] = await Promise.all([
+      const [dueCount, learningPlan, learningPreference, leaderboard, masteryDist, activityLogs] = await Promise.all([
           this.getDueCount(uid),
           this.getLearningPlan(uid),
+          this.getLearningPreference(uid),
           this.getLeaderboard(uid),
           this.getMasteryDistribution(uid),
           this.getActivityLogs(uid),
@@ -712,10 +870,11 @@ class IndexedDBStorageService implements IStorageService {
 
       return {
           dueCount,
-          officialBooks: official,
+          officialBooks: accessibleOfficial,
           myBooks: mine,
           progressMap,
           learningPlan,
+          learningPreference,
           leaderboard,
           masteryDist,
           activityLogs,
@@ -735,12 +894,13 @@ class IndexedDBStorageService implements IStorageService {
           ],
           accountOverview: {
               subscriptionPlan: sessionUser?.subscriptionPlan || SubscriptionPlan.TOC_FREE,
-              organizationRole: sessionUser?.organizationRole,
-              organizationName: sessionUser?.organizationName,
-              priceLabel: plan.priceLabel,
-              audienceLabel: plan.audienceLabel,
-              featureSummary: plan.featureSummary,
-              aiUsage: {
+                  organizationRole: sessionUser?.organizationRole,
+                  organizationName: sessionUser?.organizationName,
+                  priceLabel: plan.priceLabel,
+                  pricingNote: plan.pricingNote,
+                  audienceLabel: plan.audienceLabel,
+                  featureSummary: plan.featureSummary,
+                  aiUsage: {
                   monthKey: new Date().toISOString().slice(0, 7),
                   estimatedCostMilliYen: 240,
                   budgetMilliYen: plan.monthlyAiBudgetMilliYen,
@@ -809,10 +969,13 @@ class IndexedDBStorageService implements IStorageService {
           organizationRole: user.organizationRole,
           notifiedStudentCount: user.organizationRole === OrganizationRole.GROUP_ADMIN ? students.length : Math.max(1, students.length - 1),
           notifications7d: user.organizationRole === OrganizationRole.GROUP_ADMIN ? 5 : 3,
+          assignedStudentCount: students.filter((student) => student.assignedInstructorUid === user.uid).length,
         }));
 
+      const assignedStudents = students.filter((student) => student.assignedInstructorUid).length;
+
       return {
-        organizationName: sessionUser?.organizationName || 'MedAce Demo Academy',
+        organizationName: sessionUser?.organizationName || 'Steady Study Demo Academy',
         subscriptionPlan: sessionUser?.subscriptionPlan || SubscriptionPlan.TOB_PAID,
         totalMembers: instructors.length + students.length,
         totalStudents: students.length,
@@ -821,8 +984,11 @@ class IndexedDBStorageService implements IStorageService {
         atRiskStudents: students.filter((student) => student.riskLevel !== StudentRiskLevel.SAFE).length,
         learningPlanCount: Math.max(1, students.length - 1),
         notifications7d: 8,
+        assignmentCoverageRate: students.length > 0 ? Math.round((assignedStudents / students.length) * 100) : 0,
+        unassignedStudents: students.filter((student) => !student.assignedInstructorUid).length,
         instructors,
         atRiskStudentList: students.filter((student) => student.riskLevel !== StudentRiskLevel.SAFE),
+        studentAssignments: students,
       };
   }
 

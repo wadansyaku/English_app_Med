@@ -1,4 +1,4 @@
-import { EnglishLevel, OrganizationRole, SubscriptionPlan, UserGrade, UserProfile, UserRole, UserStats } from '../../types';
+import { EnglishLevel, OrganizationRole, SubscriptionPlan, UserGrade, UserProfile, UserRole, UserStats, UserStudyMode } from '../../types';
 import { HttpError } from './http';
 import { AppEnv, DbUserRow } from './types';
 
@@ -87,6 +87,7 @@ export const mapUserRowToProfile = (row: DbUserRow): UserProfile => ({
   englishLevel: row.english_level as EnglishLevel | undefined,
   subscriptionPlan: (row.subscription_plan as SubscriptionPlan | null) || SubscriptionPlan.TOC_FREE,
   organizationName: row.organization_name || undefined,
+  studyMode: (row.study_mode as UserStudyMode | null) || UserStudyMode.FOCUS,
   needsOnboarding: row.role === UserRole.STUDENT && !row.english_level,
   stats: normalizeStats(row),
 });
@@ -307,9 +308,9 @@ export const ensureDemoUser = async (env: AppEnv, role: UserRole, organizationRo
         : SubscriptionPlan.TOB_PAID,
     organizationName:
       role === UserRole.ADMIN
-        ? 'MedAce HQ'
+        ? 'Steady Study HQ'
         : organizationRole
-          ? 'MedAce Demo Academy'
+          ? 'Steady Study Demo Academy'
           : undefined,
   });
 };

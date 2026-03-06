@@ -14,6 +14,7 @@ export interface SubscriptionPolicy {
   label: string;
   audienceLabel: string;
   priceLabel: string;
+  pricingNote: string;
   monthlyAiBudgetMilliYen: number;
   allowedAiActions: MeteredAiAction[];
   featureSummary: string[];
@@ -31,6 +32,7 @@ export const SUBSCRIPTION_POLICIES: Record<SubscriptionPlan, SubscriptionPolicy>
     label: 'フリープラン',
     audienceLabel: '個人向け',
     priceLabel: '無料',
+    pricingNote: '広告付きのセルフサーブ導線',
     monthlyAiBudgetMilliYen: 1200,
     allowedAiActions: ['generateGeminiSentence', 'generateAIQuiz'],
     featureSummary: [
@@ -43,7 +45,8 @@ export const SUBSCRIPTION_POLICIES: Record<SubscriptionPlan, SubscriptionPolicy>
     plan: SubscriptionPlan.TOC_PAID,
     label: 'パーソナルプラン',
     audienceLabel: '個人向け',
-    priceLabel: '拡張利用',
+    priceLabel: '月額課金想定',
+    pricingNote: '広告なしの個人向け拡張プラン',
     monthlyAiBudgetMilliYen: 12000,
     allowedAiActions: [
       'generateGeminiSentence',
@@ -62,7 +65,8 @@ export const SUBSCRIPTION_POLICIES: Record<SubscriptionPlan, SubscriptionPolicy>
     plan: SubscriptionPlan.TOB_FREE,
     label: 'ビジネスフリープラン',
     audienceLabel: '教室・法人向け',
-    priceLabel: '導入準備',
+    priceLabel: '無料トライアル',
+    pricingNote: '導入検証用。正式教材と権限運用は本導入前提',
     monthlyAiBudgetMilliYen: 8000,
     allowedAiActions: [
       'generateGeminiSentence',
@@ -80,7 +84,8 @@ export const SUBSCRIPTION_POLICIES: Record<SubscriptionPlan, SubscriptionPolicy>
     plan: SubscriptionPlan.TOB_PAID,
     label: 'ビジネスプラン',
     audienceLabel: '教室・法人向け',
-    priceLabel: '本導入',
+    priceLabel: '月額 + 導入費',
+    pricingNote: '固定費1万円 + 生徒1人2,000円 + 講師1人500円 + 導入費60万円',
     monthlyAiBudgetMilliYen: 40000,
     allowedAiActions: [
       'generateGeminiSentence',

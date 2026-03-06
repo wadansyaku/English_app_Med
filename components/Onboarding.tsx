@@ -117,7 +117,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ user, onComplete, isRetake = fa
               </h1>
               <p className="mt-4 text-sm md:text-base text-white/78 leading-relaxed max-w-lg">
                 CEFR の自己評価の考え方と placement test の定番形式を参考に、文法・語彙・読解を 12 問で確認します。
-                これは公式資格判定ではなく、MedAce で学習を始めるための推定レベルです。
+                これは公式資格判定ではなく、Steady Study で学習を始めるための推定レベルです。
               </p>
 
               <div className="mt-8 grid gap-3">
@@ -388,7 +388,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ user, onComplete, isRetake = fa
                 </button>
 
                 <p className="mt-3 text-xs text-white/55">
-                  これは公式 CEFR 認定ではなく、MedAce 内での開始レベル推定です。
+                  これは公式 CEFR 認定ではなく、Steady Study 内での開始レベル推定です。
                 </p>
               </div>
             </div>

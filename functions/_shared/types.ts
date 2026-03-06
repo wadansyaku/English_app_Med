@@ -15,6 +15,7 @@ export interface DbUserRow {
   subscription_plan: string | null;
   organization_name: string | null;
   organization_role: string | null;
+  study_mode: string | null;
   stats_xp: number | null;
   stats_level: number | null;
   stats_current_streak: number | null;

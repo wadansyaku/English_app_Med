@@ -1,5 +1,5 @@
 import { AI_ACTION_ESTIMATES, getSubscriptionPolicy } from '../../config/subscription';
-import { AccountOverview, ActivityLog, AdminAiActionSummary, AdminBookInsight, AdminDashboardSnapshot, AdminOrganizationInsight, AdminPlanBreakdownItem, AdminRiskBreakdownItem, AdminTrendPoint, AdminWordReportSummary, BookMetadata, BookProgress, DashboardSnapshot, InstructorNotification, LeaderboardEntry, LearningHistory, LearningPlan, MasteryDistribution, OrganizationDashboardSnapshot, OrganizationInstructorSummary, OrganizationRole, StudentRiskLevel, StudentSummary, StudentWorksheetSnapshot, SubscriptionPlan, UserProfile, UserRole, WordData } from '../../types';
+import { AccountOverview, ActivityLog, AdminAiActionSummary, AdminBookInsight, AdminDashboardSnapshot, AdminOrganizationInsight, AdminPlanBreakdownItem, AdminRiskBreakdownItem, AdminTrendPoint, AdminWordReportSummary, BookAccessScope, BookCatalogSource, BookMetadata, BookProgress, DashboardSnapshot, InstructorNotification, LeaderboardEntry, LearningHistory, LearningPlan, LearningPreference, LearningPreferenceIntensity, MasteryDistribution, OrganizationDashboardSnapshot, OrganizationInstructorSummary, OrganizationRole, StudentRiskLevel, StudentSummary, StudentWorksheetSnapshot, SubscriptionPlan, UserProfile, UserRole, WordData } from '../../types';
 import { mapUserRowToProfile, requireOrganizationRole, requireRole } from './auth';
 import { HttpError } from './http';
 import { AppEnv, DbUserRow } from './types';
@@ -20,6 +20,8 @@ interface DbBookRow {
   description: string | null;
   source_context: string | null;
   created_by: string | null;
+  catalog_source: string | null;
+  access_scope: string | null;
 }
 
 interface DbWordRow {
@@ -45,6 +47,19 @@ interface DbHistoryRow {
   ease_factor: number;
   correct_count: number;
   attempt_count: number;
+}
+
+interface DbLearningPreferenceRow {
+  user_id: string;
+  target_exam: string | null;
+  target_score: string | null;
+  exam_date: string | null;
+  weekly_study_days: number | null;
+  daily_study_minutes: number | null;
+  weak_skill_focus: string | null;
+  motivation_note: string | null;
+  intensity: string | null;
+  updated_at: number;
 }
 
 const slugifySegment = (value: string): string => value
@@ -88,6 +103,8 @@ const toBookMetadata = (row: DbBookRow): BookMetadata => ({
   isPriority: Boolean(row.is_priority),
   description: row.description || undefined,
   sourceContext: row.source_context || undefined,
+  catalogSource: (row.catalog_source as BookCatalogSource | null) || (row.created_by ? BookCatalogSource.USER_GENERATED : BookCatalogSource.LICENSED_PARTNER),
+  accessScope: (row.access_scope as BookAccessScope | null) || (row.created_by ? BookAccessScope.ALL_PLANS : BookAccessScope.BUSINESS_ONLY),
 });
 
 const toWordData = (row: DbWordRow): WordData => ({
@@ -138,6 +155,66 @@ const isPaidPlan = (plan: SubscriptionPlan | undefined): boolean => {
   return plan === SubscriptionPlan.TOC_PAID || plan === SubscriptionPlan.TOB_PAID;
 };
 
+const isBusinessPaidPlan = (plan: SubscriptionPlan | undefined): boolean => {
+  return plan === SubscriptionPlan.TOB_PAID;
+};
+
+const canAccessOfficialBook = (user: DbUserRow, book: BookMetadata): boolean => {
+  if (book.catalogSource === BookCatalogSource.USER_GENERATED) return false;
+  if ((book.accessScope || BookAccessScope.ALL_PLANS) === BookAccessScope.ALL_PLANS) return true;
+  return isBusinessPaidPlan(getUserSubscriptionPlan(user));
+};
+
+const BOOK_LIST_SQL = 'SELECT * FROM books ORDER BY (created_by IS NOT NULL) ASC, is_priority DESC, title ASC';
+
+const getVisibleBookRows = (user: DbUserRow, rows: DbBookRow[]): DbBookRow[] => {
+  if (user.role === UserRole.ADMIN) return rows;
+  return rows.filter((row) => row.created_by === user.id || canAccessOfficialBook(user, toBookMetadata(row)));
+};
+
+const readVisibleBookRows = async (env: AppEnv, user: DbUserRow): Promise<DbBookRow[]> => {
+  const rows = await readAll<DbBookRow>(env, BOOK_LIST_SQL);
+  return getVisibleBookRows(user, rows);
+};
+
+const buildInClause = (count: number): string => Array.from({ length: count }, () => '?').join(', ');
+
+const getVisibleBookIds = async (env: AppEnv, user: DbUserRow): Promise<string[]> => {
+  const rows = await readVisibleBookRows(env, user);
+  return rows.map((row) => row.id);
+};
+
+const getVisibleDueCount = async (env: AppEnv, user: DbUserRow): Promise<number> => {
+  const bookIds = await getVisibleBookIds(env, user);
+  if (bookIds.length === 0) return 0;
+
+  const row = await readFirst<{ count: number }>(
+    env,
+    `SELECT COUNT(*) AS count
+     FROM learning_histories
+     WHERE user_id = ? AND next_review_date <= ? AND status != 'graduated'
+       AND book_id IN (${buildInClause(bookIds.length)})`,
+    user.id,
+    Date.now(),
+    ...bookIds
+  );
+
+  return Number(row?.count || 0);
+};
+
+const defaultLearningPreference = (userId: string): LearningPreference => ({
+  userUid: userId,
+  targetExam: '',
+  targetScore: '',
+  examDate: '',
+  weeklyStudyDays: 4,
+  dailyStudyMinutes: 20,
+  weakSkillFocus: '',
+  motivationNote: '',
+  intensity: LearningPreferenceIntensity.BALANCED,
+  updatedAt: Date.now(),
+});
+
 const getUserSubscriptionPlan = (user: DbUserRow): SubscriptionPlan => {
   return (user.subscription_plan as SubscriptionPlan | null) || SubscriptionPlan.TOC_FREE;
 };
@@ -159,6 +236,23 @@ const getUserOrganizationRole = (user: DbUserRow): OrganizationRole | undefined 
 
 const getBookOwnership = async (env: AppEnv, bookId: string): Promise<{ id: string; created_by: string | null; } | null> => {
   return readFirst<{ id: string; created_by: string | null; }>(env, 'SELECT id, created_by FROM books WHERE id = ?', bookId);
+};
+
+const getBookRow = async (env: AppEnv, bookId: string): Promise<DbBookRow | null> => {
+  return readFirst<DbBookRow>(env, 'SELECT * FROM books WHERE id = ?', bookId);
+};
+
+const assertBookReadAccess = async (env: AppEnv, user: DbUserRow, bookId: string): Promise<void> => {
+  const row = await getBookRow(env, bookId);
+  if (!row) throw new HttpError(404, '単語帳が見つかりません。');
+
+  if (row.created_by === user.id || user.role === UserRole.ADMIN) {
+    return;
+  }
+
+  if (!canAccessOfficialBook(user, toBookMetadata(row))) {
+    throw new HttpError(403, 'このプランでは対象教材を利用できません。');
+  }
 };
 
 const assertBookWriteAccess = async (env: AppEnv, user: DbUserRow, bookId: string): Promise<void> => {
@@ -231,6 +325,8 @@ const handleBatchImportWords = async (env: AppEnv, user: DbUserRow, payload: any
   const csvRows = Array.isArray(payload?.csvRows) ? payload.csvRows : [];
   const contextSummary = typeof payload?.contextSummary === 'string' ? payload.contextSummary : undefined;
   const createdByUid = typeof payload?.createdByUid === 'string' ? payload.createdByUid : undefined;
+  const optionCatalogSource = payload?.options?.catalogSource as BookCatalogSource | undefined;
+  const optionAccessScope = payload?.options?.accessScope as BookAccessScope | undefined;
 
   if (!defaultBookName || csvRows.length === 0) {
     throw new HttpError(400, 'インポート対象のデータが空です。');
@@ -259,6 +355,12 @@ const handleBatchImportWords = async (env: AppEnv, user: DbUserRow, payload: any
           isPriority: !ownerId && /duo/i.test(bookName),
           description,
           sourceContext: contextSummary,
+          catalogSource: ownerId
+            ? BookCatalogSource.USER_GENERATED
+            : (optionCatalogSource || BookCatalogSource.LICENSED_PARTNER),
+          accessScope: ownerId
+            ? BookAccessScope.ALL_PLANS
+            : (optionAccessScope || BookAccessScope.BUSINESS_ONLY),
           createdBy: ownerId,
         },
         words: [],
@@ -289,8 +391,8 @@ const handleBatchImportWords = async (env: AppEnv, user: DbUserRow, payload: any
     }
 
     await env.DB.prepare(`
-      INSERT INTO books (id, title, word_count, is_priority, description, source_context, created_by, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO books (id, title, word_count, is_priority, description, source_context, created_by, catalog_source, access_scope, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         title = excluded.title,
         word_count = excluded.word_count,
@@ -298,6 +400,8 @@ const handleBatchImportWords = async (env: AppEnv, user: DbUserRow, payload: any
         description = excluded.description,
         source_context = excluded.source_context,
         created_by = excluded.created_by,
+        catalog_source = excluded.catalog_source,
+        access_scope = excluded.access_scope,
         updated_at = excluded.updated_at
     `).bind(
       meta.id,
@@ -307,6 +411,8 @@ const handleBatchImportWords = async (env: AppEnv, user: DbUserRow, payload: any
       meta.description || null,
       meta.sourceContext || null,
       meta.createdBy,
+      meta.catalogSource || BookCatalogSource.USER_GENERATED,
+      meta.accessScope || BookAccessScope.ALL_PLANS,
       Date.now(),
       Date.now()
     ).run();
@@ -361,8 +467,9 @@ const handleUpdateWord = async (env: AppEnv, user: DbUserRow, word: WordData): P
 const handleReportWord = async (env: AppEnv, user: DbUserRow, wordId: string, reason: string): Promise<void> => {
   if (!reason.trim()) throw new HttpError(400, '報告理由を入力してください。');
 
-  const word = await readFirst<{ id: string }>(env, 'SELECT id FROM words WHERE id = ?', wordId);
+  const word = await readFirst<{ id: string; book_id: string }>(env, 'SELECT id, book_id FROM words WHERE id = ?', wordId);
   if (!word) throw new HttpError(404, '対象の単語が見つかりません。');
+  await assertBookReadAccess(env, user, word.book_id);
 
   await env.DB.prepare(`
     INSERT INTO word_reports (word_id, reporter_user_id, reason, created_at)
@@ -372,7 +479,17 @@ const handleReportWord = async (env: AppEnv, user: DbUserRow, wordId: string, re
   await env.DB.prepare('UPDATE words SET is_reported = 1, updated_at = ? WHERE id = ?').bind(Date.now(), wordId).run();
 };
 
-const handleUpdateWordCache = async (env: AppEnv, wordId: string, sentence: string, translation: string): Promise<void> => {
+const handleUpdateWordCache = async (
+  env: AppEnv,
+  user: DbUserRow,
+  wordId: string,
+  sentence: string,
+  translation: string
+): Promise<void> => {
+  const word = await readFirst<{ book_id: string }>(env, 'SELECT book_id FROM words WHERE id = ?', wordId);
+  if (!word) throw new HttpError(404, '対象の単語が見つかりません。');
+  await assertBookReadAccess(env, user, word.book_id);
+
   await env.DB.prepare(`
     UPDATE words
     SET example_sentence = ?, example_meaning = ?, updated_at = ?
@@ -381,16 +498,21 @@ const handleUpdateWordCache = async (env: AppEnv, wordId: string, sentence: stri
 };
 
 const handleGetDailySessionWords = async (env: AppEnv, user: DbUserRow, limit: number): Promise<WordData[]> => {
+  const visibleBookIds = await getVisibleBookIds(env, user);
+  if (visibleBookIds.length === 0) return [];
+
   const dueRows = await readAll<DbWordRow>(
     env,
     `SELECT w.*
      FROM learning_histories h
      JOIN words w ON w.id = h.word_id
      WHERE h.user_id = ? AND h.status != 'graduated' AND h.next_review_date <= ?
+       AND w.book_id IN (${buildInClause(visibleBookIds.length)})
      ORDER BY h.next_review_date ASC
      LIMIT ?`,
     user.id,
     Date.now(),
+    ...visibleBookIds,
     limit
   );
 
@@ -406,9 +528,11 @@ const handleGetDailySessionWords = async (env: AppEnv, user: DbUserRow, limit: n
        SELECT 1 FROM learning_histories h
        WHERE h.user_id = ? AND h.word_id = w.id
      )
+       AND w.book_id IN (${buildInClause(visibleBookIds.length)})
      ORDER BY w.book_id ASC, w.word_number ASC
      LIMIT ?`,
     user.id,
+    ...visibleBookIds,
     limit - dueRows.length
   );
 
@@ -416,6 +540,7 @@ const handleGetDailySessionWords = async (env: AppEnv, user: DbUserRow, limit: n
 };
 
 const handleGetBookSession = async (env: AppEnv, user: DbUserRow, bookId: string, limit: number): Promise<WordData[]> => {
+  await assertBookReadAccess(env, user, bookId);
   const dueRows = await readAll<DbWordRow>(
     env,
     `SELECT w.*
@@ -471,6 +596,7 @@ const handleGetBookSession = async (env: AppEnv, user: DbUserRow, bookId: string
 };
 
 const handleSaveSrsHistory = async (env: AppEnv, user: DbUserRow, word: WordData, rating: number): Promise<void> => {
+  await assertBookReadAccess(env, user, word.bookId);
   const existing = await readFirst<DbHistoryRow>(
     env,
     'SELECT * FROM learning_histories WHERE user_id = ? AND word_id = ?',
@@ -529,6 +655,7 @@ const handleSaveSrsHistory = async (env: AppEnv, user: DbUserRow, word: WordData
 };
 
 const handleSaveHistory = async (env: AppEnv, user: DbUserRow, result: Partial<LearningHistory> & { wordId: string; bookId: string; }): Promise<void> => {
+  await assertBookReadAccess(env, user, result.bookId);
   const existing = await readFirst<DbHistoryRow>(
     env,
     'SELECT * FROM learning_histories WHERE user_id = ? AND word_id = ?',
@@ -579,7 +706,9 @@ const handleSaveHistory = async (env: AppEnv, user: DbUserRow, result: Partial<L
 
 const handleGetAllStudentsProgress = async (env: AppEnv, currentUser: DbUserRow): Promise<StudentSummary[]> => {
   const organizationName = currentUser.role === UserRole.ADMIN ? null : currentUser.organization_name || null;
-  const bypassInstructorAssignment = currentUser.role === UserRole.ADMIN || Boolean(organizationName);
+  const bypassInstructorAssignment =
+    currentUser.role === UserRole.ADMIN ||
+    currentUser.organization_role === OrganizationRole.GROUP_ADMIN;
   const rows = await readAll<{
     uid: string;
     name: string;
@@ -592,6 +721,9 @@ const handleGetAllStudentsProgress = async (env: AppEnv, currentUser: DbUserRow)
     last_active: number | null;
     last_notification_at: number | null;
     last_notification_message: string | null;
+    assigned_instructor_uid: string | null;
+    assigned_instructor_name: string | null;
+    has_learning_plan: number;
   }>(
     env,
     `SELECT
@@ -617,19 +749,27 @@ const handleGetAllStudentsProgress = async (env: AppEnv, currentUser: DbUserRow)
          WHERE n.student_user_id = u.id
          ORDER BY n.created_at DESC
          LIMIT 1
-       ) AS last_notification_message
+       ) AS last_notification_message,
+       assign.instructor_user_id AS assigned_instructor_uid,
+       assigned.display_name AS assigned_instructor_name,
+       CASE WHEN lp.user_id IS NULL THEN 0 ELSE 1 END AS has_learning_plan
      FROM users u
      LEFT JOIN learning_histories h ON h.user_id = u.id
+     LEFT JOIN learning_plans lp ON lp.user_id = u.id
+     LEFT JOIN student_instructor_assignments assign ON assign.student_user_id = u.id
+     LEFT JOIN users assigned ON assigned.id = assign.instructor_user_id
      WHERE u.role = ?
        AND (? IS NULL OR u.organization_name = ?)
-       AND (? = 1 OR EXISTS (
-         SELECT 1 FROM instructor_notifications n2
-         WHERE n2.student_user_id = u.id AND n2.instructor_user_id = ?
-       ) OR NOT EXISTS (
-         SELECT 1 FROM instructor_notifications n3
-         WHERE n3.student_user_id = u.id
-       ))
-     GROUP BY u.id, u.display_name, u.email, u.subscription_plan, u.organization_name
+       AND (? = 1 OR assign.instructor_user_id = ? OR assign.instructor_user_id IS NULL)
+     GROUP BY
+       u.id,
+       u.display_name,
+       u.email,
+       u.subscription_plan,
+       u.organization_name,
+       assign.instructor_user_id,
+       assigned.display_name,
+       has_learning_plan
      ORDER BY last_active DESC, name ASC`,
     UserRole.STUDENT,
     organizationName,
@@ -641,12 +781,27 @@ const handleGetAllStudentsProgress = async (env: AppEnv, currentUser: DbUserRow)
   return rows.map((row) => {
     const lastActive = Number(row.last_active || 0);
     const daysSinceActive = lastActive > 0 ? Math.floor((Date.now() - lastActive) / DAY_MS) : Number.POSITIVE_INFINITY;
+    const accuracy = row.total_attempts ? Number(row.total_correct || 0) / Number(row.total_attempts || 1) : 0;
     const riskLevel =
       daysSinceActive >= 3
         ? StudentRiskLevel.DANGER
         : daysSinceActive >= 1
           ? StudentRiskLevel.WARNING
           : StudentRiskLevel.SAFE;
+    const riskReasons: string[] = [];
+
+    if (daysSinceActive >= 3) riskReasons.push('3日以上学習が空いています');
+    else if (daysSinceActive >= 1) riskReasons.push('前回学習から1日以上空いています');
+    if (accuracy > 0 && accuracy < 0.7) riskReasons.push(`正答率が ${Math.round(accuracy * 100)}% です`);
+    if (!row.has_learning_plan) riskReasons.push('学習プランが未設定です');
+    if (riskReasons.length === 0) riskReasons.push('学習ペースは安定しています');
+
+    const recommendedAction =
+      riskLevel === StudentRiskLevel.DANGER
+        ? '短い復習タスクを講師から指定して再開を促す'
+        : riskLevel === StudentRiskLevel.WARNING
+          ? '前回教材の復習を小さく区切って続けてもらう'
+          : '現状の教材進行を維持しつつ次の単元を提案する';
 
     return {
       uid: row.uid,
@@ -656,11 +811,16 @@ const handleGetAllStudentsProgress = async (env: AppEnv, currentUser: DbUserRow)
       totalAttempts: Number(row.total_attempts || 0),
       lastActive,
       riskLevel,
-      accuracy: row.total_attempts ? Number(row.total_correct || 0) / Number(row.total_attempts || 1) : 0,
+      accuracy,
       subscriptionPlan: (row.subscription_plan as SubscriptionPlan | null) || SubscriptionPlan.TOC_FREE,
       organizationName: row.organization_name || undefined,
       lastNotificationAt: Number(row.last_notification_at || 0) || undefined,
       lastNotificationMessage: row.last_notification_message || undefined,
+      assignedInstructorUid: row.assigned_instructor_uid || undefined,
+      assignedInstructorName: row.assigned_instructor_name || undefined,
+      hasLearningPlan: Boolean(row.has_learning_plan),
+      riskReasons,
+      recommendedAction,
     };
   });
 };
@@ -674,23 +834,24 @@ const handleGetStudentWorksheetSnapshot = async (
     throw new HttpError(400, '対象生徒を指定してください。');
   }
 
+  const visibleStudents = await handleGetAllStudentsProgress(env, currentUser);
+  const visibleStudent = visibleStudents.find((student) => student.uid === studentUid);
   const student = await readFirst<{
     id: string;
     display_name: string;
     role: string;
     organization_name: string | null;
-  }>(
-    env,
-    'SELECT id, display_name, role, organization_name FROM users WHERE id = ?',
-    studentUid
-  );
+  }>(env, 'SELECT id, display_name, role, organization_name FROM users WHERE id = ?', studentUid);
 
   if (!student || student.role !== UserRole.STUDENT) {
     throw new HttpError(404, '対象生徒が見つかりません。');
   }
 
-  if (currentUser.role !== UserRole.ADMIN && currentUser.organization_name !== student.organization_name) {
-    throw new HttpError(403, '同じ組織の生徒のみ問題印刷できます。');
+  if (
+    currentUser.role !== UserRole.ADMIN &&
+    (!visibleStudent || currentUser.organization_name !== student.organization_name)
+  ) {
+    throw new HttpError(403, '担当範囲の生徒のみ問題印刷できます。');
   }
 
   const rows = await readAll<{
@@ -1115,6 +1276,7 @@ const handleGetOrganizationDashboardSnapshot = async (env: AppEnv, user: DbUserR
       organization_role: string | null;
       notified_student_count: number;
       notifications_7d: number;
+      assigned_student_count: number;
     }>(
       env,
       `SELECT
@@ -1123,7 +1285,8 @@ const handleGetOrganizationDashboardSnapshot = async (env: AppEnv, user: DbUserR
          u.email AS email,
          u.organization_role AS organization_role,
          COALESCE(stats.notified_student_count, 0) AS notified_student_count,
-         COALESCE(stats.notifications_7d, 0) AS notifications_7d
+         COALESCE(stats.notifications_7d, 0) AS notifications_7d,
+         COALESCE(assignments.assigned_student_count, 0) AS assigned_student_count
        FROM users u
        LEFT JOIN (
          SELECT
@@ -1135,6 +1298,13 @@ const handleGetOrganizationDashboardSnapshot = async (env: AppEnv, user: DbUserR
          WHERE s.organization_name = ?
          GROUP BY n.instructor_user_id
        ) stats ON stats.instructor_user_id = u.id
+       LEFT JOIN (
+         SELECT
+           instructor_user_id,
+           COUNT(*) AS assigned_student_count
+         FROM student_instructor_assignments
+         GROUP BY instructor_user_id
+       ) assignments ON assignments.instructor_user_id = u.id
        WHERE u.role = ? AND u.organization_name = ?
        ORDER BY
          CASE WHEN u.organization_role = ? THEN 0 ELSE 1 END,
@@ -1155,7 +1325,10 @@ const handleGetOrganizationDashboardSnapshot = async (env: AppEnv, user: DbUserR
     organizationRole: row.organization_role ? row.organization_role as OrganizationRole : undefined,
     notifiedStudentCount: Number(row.notified_student_count || 0),
     notifications7d: Number(row.notifications_7d || 0),
+    assignedStudentCount: Number(row.assigned_student_count || 0),
   }));
+
+  const assignedStudents = students.filter((student) => student.assignedInstructorUid).length;
 
   return {
     organizationName,
@@ -1167,11 +1340,14 @@ const handleGetOrganizationDashboardSnapshot = async (env: AppEnv, user: DbUserR
     atRiskStudents: students.filter((student) => student.riskLevel !== StudentRiskLevel.SAFE).length,
     learningPlanCount: Number(learningPlanCountRow?.count || 0),
     notifications7d: Number(notifications7dRow?.count || 0),
+    assignmentCoverageRate: students.length > 0 ? Math.round((assignedStudents / students.length) * 100) : 0,
+    unassignedStudents: students.filter((student) => !student.assignedInstructorUid).length,
     instructors,
     atRiskStudentList: [...students]
       .filter((student) => student.riskLevel !== StudentRiskLevel.SAFE)
       .sort((left, right) => left.lastActive - right.lastActive)
       .slice(0, 8),
+    studentAssignments: [...students].sort((left, right) => left.name.localeCompare(right.name)),
   };
 };
 
@@ -1199,6 +1375,16 @@ const handleSendInstructorNotification = async (
   }
   if (instructor.role !== UserRole.ADMIN && instructor.organization_name && instructor.organization_name !== student.organization_name) {
     throw new HttpError(403, '同じ組織の生徒にのみ通知できます。');
+  }
+  if (instructor.role === UserRole.INSTRUCTOR && instructor.organization_role !== OrganizationRole.GROUP_ADMIN) {
+    const assignment = await readFirst<{ instructor_user_id: string | null }>(
+      env,
+      'SELECT instructor_user_id FROM student_instructor_assignments WHERE student_user_id = ?',
+      studentUid
+    );
+    if (assignment?.instructor_user_id && assignment.instructor_user_id !== instructor.id) {
+      throw new HttpError(403, '担当外の生徒には通知できません。');
+    }
   }
 
   await env.DB.prepare(`
@@ -1305,6 +1491,7 @@ const handleGetAccountOverview = async (env: AppEnv, user: DbUserRow): Promise<A
     organizationRole: getUserOrganizationRole(user),
     organizationName: user.organization_name || undefined,
     priceLabel: plan.priceLabel,
+    pricingNote: plan.pricingNote,
     audienceLabel: plan.audienceLabel,
     featureSummary: plan.featureSummary,
     aiUsage: await handleGetAiUsageSummary(env, user),
@@ -1318,6 +1505,8 @@ const handleResetAllData = async (env: AppEnv): Promise<void> => {
     env.DB.prepare('DELETE FROM instructor_notifications'),
     env.DB.prepare('DELETE FROM word_reports'),
     env.DB.prepare('DELETE FROM learning_histories'),
+    env.DB.prepare('DELETE FROM student_instructor_assignments'),
+    env.DB.prepare('DELETE FROM learning_preferences'),
     env.DB.prepare('DELETE FROM learning_plans'),
     env.DB.prepare('DELETE FROM words'),
     env.DB.prepare('DELETE FROM books'),
@@ -1375,6 +1564,106 @@ const handleGetLearningPlan = async (env: AppEnv, user: DbUserRow): Promise<Lear
     selectedBookIds: JSON.parse(row.selected_book_ids || '[]'),
     status: row.status,
   };
+};
+
+const handleSaveLearningPreference = async (env: AppEnv, user: DbUserRow, preference: LearningPreference): Promise<void> => {
+  await env.DB.prepare(`
+    INSERT INTO learning_preferences (
+      user_id, target_exam, target_score, exam_date, weekly_study_days, daily_study_minutes,
+      weak_skill_focus, motivation_note, intensity, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(user_id) DO UPDATE SET
+      target_exam = excluded.target_exam,
+      target_score = excluded.target_score,
+      exam_date = excluded.exam_date,
+      weekly_study_days = excluded.weekly_study_days,
+      daily_study_minutes = excluded.daily_study_minutes,
+      weak_skill_focus = excluded.weak_skill_focus,
+      motivation_note = excluded.motivation_note,
+      intensity = excluded.intensity,
+      updated_at = excluded.updated_at
+  `).bind(
+    user.id,
+    preference.targetExam || null,
+    preference.targetScore || null,
+    preference.examDate || null,
+    preference.weeklyStudyDays || 4,
+    preference.dailyStudyMinutes || 20,
+    preference.weakSkillFocus || null,
+    preference.motivationNote || null,
+    preference.intensity || LearningPreferenceIntensity.BALANCED,
+    Date.now()
+  ).run();
+};
+
+const handleGetLearningPreference = async (env: AppEnv, user: DbUserRow): Promise<LearningPreference> => {
+  const row = await readFirst<DbLearningPreferenceRow>(env, 'SELECT * FROM learning_preferences WHERE user_id = ?', user.id);
+  if (!row) return defaultLearningPreference(user.id);
+
+  return {
+    userUid: row.user_id,
+    targetExam: row.target_exam || '',
+    targetScore: row.target_score || '',
+    examDate: row.exam_date || '',
+    weeklyStudyDays: Number(row.weekly_study_days || 4),
+    dailyStudyMinutes: Number(row.daily_study_minutes || 20),
+    weakSkillFocus: row.weak_skill_focus || '',
+    motivationNote: row.motivation_note || '',
+    intensity: (row.intensity as LearningPreferenceIntensity | null) || LearningPreferenceIntensity.BALANCED,
+    updatedAt: row.updated_at,
+  };
+};
+
+const handleAssignStudentInstructor = async (
+  env: AppEnv,
+  currentUser: DbUserRow,
+  studentUid: string,
+  instructorUid: string | null
+): Promise<void> => {
+  if (!studentUid) throw new HttpError(400, '生徒を指定してください。');
+  if (currentUser.role !== UserRole.ADMIN) {
+    requireOrganizationRole(currentUser, [OrganizationRole.GROUP_ADMIN]);
+  }
+
+  const student = await readFirst<{ id: string; organization_name: string | null; role: string }>(
+    env,
+    'SELECT id, organization_name, role FROM users WHERE id = ?',
+    studentUid
+  );
+  if (!student || student.role !== UserRole.STUDENT) throw new HttpError(404, '対象生徒が見つかりません。');
+  if (currentUser.role !== UserRole.ADMIN && student.organization_name !== currentUser.organization_name) {
+    throw new HttpError(403, '同じ組織の生徒のみ担当変更できます。');
+  }
+
+  if (instructorUid) {
+    const instructor = await readFirst<{ id: string; organization_name: string | null; role: string }>(
+      env,
+      'SELECT id, organization_name, role FROM users WHERE id = ?',
+      instructorUid
+    );
+    if (!instructor || instructor.role !== UserRole.INSTRUCTOR) {
+      throw new HttpError(404, '担当講師が見つかりません。');
+    }
+    if (!student.organization_name) {
+      throw new HttpError(400, '組織に所属していない生徒には担当割当できません。');
+    }
+    if (instructor.organization_name !== student.organization_name) {
+      throw new HttpError(400, '生徒と同じ組織の講師にのみ割り当てできます。');
+    }
+    if (currentUser.role !== UserRole.ADMIN && instructor.organization_name !== currentUser.organization_name) {
+      throw new HttpError(403, '同じ組織の講師にのみ割り当てできます。');
+    }
+    await env.DB.prepare(`
+      INSERT INTO student_instructor_assignments (student_user_id, instructor_user_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(student_user_id) DO UPDATE SET
+        instructor_user_id = excluded.instructor_user_id,
+        updated_at = excluded.updated_at
+    `).bind(studentUid, instructorUid, Date.now(), Date.now()).run();
+    return;
+  }
+
+  await env.DB.prepare('DELETE FROM student_instructor_assignments WHERE student_user_id = ?').bind(studentUid).run();
 };
 
 const handleGetLeaderboard = async (env: AppEnv, currentUserId: string): Promise<LeaderboardEntry[]> => {
@@ -1453,10 +1742,7 @@ const handleGetActivityLogs = async (env: AppEnv, userId: string): Promise<Activ
 };
 
 const handleGetDashboardSnapshot = async (env: AppEnv, user: DbUserRow): Promise<DashboardSnapshot> => {
-  const allBooks = await readAll<DbBookRow>(
-    env,
-    'SELECT * FROM books ORDER BY (created_by IS NOT NULL) ASC, is_priority DESC, title ASC'
-  );
+  const allBooks = await readVisibleBookRows(env, user);
 
   const officialBooks: BookMetadata[] = [];
   const myBooks: BookMetadata[] = [];
@@ -1464,23 +1750,17 @@ const handleGetDashboardSnapshot = async (env: AppEnv, user: DbUserRow): Promise
   allBooks.forEach((row) => {
     const mapped = toBookMetadata(row);
     if (row.created_by === user.id) myBooks.push(mapped);
-    else officialBooks.push(mapped);
+    else if (canAccessOfficialBook(user, mapped)) officialBooks.push(mapped);
   });
 
   officialBooks.sort((a, b) => (a.isPriority === b.isPriority ? a.title.localeCompare(b.title) : a.isPriority ? -1 : 1));
   myBooks.sort((a, b) => b.id.localeCompare(a.id));
 
-  const [progressResults, dueCount, learningPlan, leaderboard, masteryDist, activityLogs, coachNotifications, accountOverview] = await Promise.all([
+  const [progressResults, dueCount, learningPlan, learningPreference, leaderboard, masteryDist, activityLogs, coachNotifications, accountOverview] = await Promise.all([
     Promise.all([...officialBooks, ...myBooks].map((book) => getBookProgress(env, user.id, book.id))),
-    readFirst<{ count: number }>(
-      env,
-      `SELECT COUNT(*) AS count
-       FROM learning_histories
-       WHERE user_id = ? AND next_review_date <= ? AND status != 'graduated'`,
-      user.id,
-      Date.now()
-    ),
+    getVisibleDueCount(env, user),
     handleGetLearningPlan(env, user),
+    handleGetLearningPreference(env, user),
     handleGetLeaderboard(env, user.id),
     handleGetMasteryDistribution(env, user.id),
     handleGetActivityLogs(env, user.id),
@@ -1494,11 +1774,12 @@ const handleGetDashboardSnapshot = async (env: AppEnv, user: DbUserRow): Promise
   });
 
   return {
-    dueCount: Number(dueCount?.count || 0),
+    dueCount,
     officialBooks,
     myBooks,
     progressMap,
     learningPlan,
+    learningPreference,
     leaderboard,
     masteryDist,
     activityLogs,
@@ -1520,10 +1801,7 @@ export const handleStorageAction = async (env: AppEnv, user: DbUserRow, body: St
       return null;
 
     case 'getBooks': {
-      const rows = await readAll<DbBookRow>(
-        env,
-        'SELECT * FROM books ORDER BY (created_by IS NOT NULL) ASC, is_priority DESC, title ASC'
-      );
+      const rows = await readVisibleBookRows(env, user);
       return rows.map(toBookMetadata);
     }
 
@@ -1532,6 +1810,7 @@ export const handleStorageAction = async (env: AppEnv, user: DbUserRow, body: St
       return null;
 
     case 'getWordsByBook': {
+      await assertBookReadAccess(env, user, String(payload.bookId || ''));
       const rows = await readAll<DbWordRow>(
         env,
         'SELECT * FROM words WHERE book_id = ? ORDER BY word_number ASC',
@@ -1549,7 +1828,7 @@ export const handleStorageAction = async (env: AppEnv, user: DbUserRow, body: St
       return null;
 
     case 'updateWordCache':
-      await handleUpdateWordCache(env, String(payload.wordId || ''), String(payload.sentence || ''), String(payload.translation || ''));
+      await handleUpdateWordCache(env, user, String(payload.wordId || ''), String(payload.sentence || ''), String(payload.translation || ''));
       return null;
 
     case 'getDailySessionWords':
@@ -1571,15 +1850,7 @@ export const handleStorageAction = async (env: AppEnv, user: DbUserRow, body: St
       return handleGetOrganizationDashboardSnapshot(env, user);
 
     case 'getDueCount': {
-      const row = await readFirst<{ count: number }>(
-        env,
-        `SELECT COUNT(*) AS count
-         FROM learning_histories
-         WHERE user_id = ? AND next_review_date <= ? AND status != 'graduated'`,
-        user.id,
-        Date.now()
-      );
-      return Number(row?.count || 0);
+      return getVisibleDueCount(env, user);
     }
 
     case 'saveSRSHistory':
@@ -1591,6 +1862,7 @@ export const handleStorageAction = async (env: AppEnv, user: DbUserRow, body: St
       return null;
 
     case 'getBookProgress':
+      await assertBookReadAccess(env, user, String(payload.bookId || ''));
       return getBookProgress(env, user.id, String(payload.bookId || ''));
 
     case 'getAllStudentsProgress':
@@ -1624,6 +1896,17 @@ export const handleStorageAction = async (env: AppEnv, user: DbUserRow, body: St
 
     case 'getLearningPlan':
       return handleGetLearningPlan(env, user);
+
+    case 'saveLearningPreference':
+      await handleSaveLearningPreference(env, user, payload.preference as LearningPreference);
+      return null;
+
+    case 'getLearningPreference':
+      return handleGetLearningPreference(env, user);
+
+    case 'assignStudentInstructor':
+      await handleAssignStudentInstructor(env, user, String(payload.studentUid || ''), payload.instructorUid ? String(payload.instructorUid) : null);
+      return null;
 
     case 'getLeaderboard':
       return handleGetLeaderboard(env, user.id);

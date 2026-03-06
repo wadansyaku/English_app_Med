@@ -64,11 +64,55 @@ export enum SubscriptionPlan {
   TOB_PAID = 'TOB_PAID'
 }
 
+export enum BookCatalogSource {
+  STEADY_STUDY_ORIGINAL = 'STEADY_STUDY_ORIGINAL',
+  LICENSED_PARTNER = 'LICENSED_PARTNER',
+  USER_GENERATED = 'USER_GENERATED',
+}
+
+export enum BookAccessScope {
+  ALL_PLANS = 'ALL_PLANS',
+  BUSINESS_ONLY = 'BUSINESS_ONLY',
+}
+
+export const BOOK_CATALOG_SOURCE_LABELS: Record<BookCatalogSource, string> = {
+  [BookCatalogSource.STEADY_STUDY_ORIGINAL]: 'Steady Study Original',
+  [BookCatalogSource.LICENSED_PARTNER]: 'ライセンス教材',
+  [BookCatalogSource.USER_GENERATED]: 'My単語帳',
+};
+
+export const BOOK_ACCESS_SCOPE_LABELS: Record<BookAccessScope, string> = {
+  [BookAccessScope.ALL_PLANS]: '全プラン',
+  [BookAccessScope.BUSINESS_ONLY]: 'ビジネス版',
+};
+
+export enum UserStudyMode {
+  FOCUS = 'FOCUS',
+  GAME = 'GAME',
+}
+
+export const USER_STUDY_MODE_LABELS: Record<UserStudyMode, string> = {
+  [UserStudyMode.FOCUS]: '集中モード',
+  [UserStudyMode.GAME]: 'ゲームモード',
+};
+
 export const SUBSCRIPTION_PLAN_LABELS: Record<SubscriptionPlan, string> = {
   [SubscriptionPlan.TOC_FREE]: 'フリープラン',
   [SubscriptionPlan.TOC_PAID]: 'パーソナルプラン',
   [SubscriptionPlan.TOB_FREE]: 'ビジネスフリープラン',
   [SubscriptionPlan.TOB_PAID]: 'ビジネスプラン',
+};
+
+export enum LearningPreferenceIntensity {
+  BALANCED = 'BALANCED',
+  REVIEW_HEAVY = 'REVIEW_HEAVY',
+  INTENSIVE = 'INTENSIVE',
+}
+
+export const LEARNING_PREFERENCE_INTENSITY_LABELS: Record<LearningPreferenceIntensity, string> = {
+  [LearningPreferenceIntensity.BALANCED]: '標準',
+  [LearningPreferenceIntensity.REVIEW_HEAVY]: '復習重視',
+  [LearningPreferenceIntensity.INTENSIVE]: '短期集中',
 };
 
 export interface UserStats {
@@ -90,6 +134,7 @@ export interface UserProfile {
   needsOnboarding?: boolean;
   subscriptionPlan?: SubscriptionPlan;
   organizationName?: string;
+  studyMode?: UserStudyMode;
 }
 
 export interface WordData {
@@ -111,6 +156,8 @@ export interface BookMetadata {
   isPriority: boolean;
   description?: string;
   sourceContext?: string;
+  catalogSource?: BookCatalogSource;
+  accessScope?: BookAccessScope;
 }
 
 export interface LearningHistory {
@@ -156,6 +203,24 @@ export interface StudentSummary {
   organizationName?: string;
   lastNotificationAt?: number;
   lastNotificationMessage?: string;
+  assignedInstructorUid?: string;
+  assignedInstructorName?: string;
+  hasLearningPlan?: boolean;
+  riskReasons?: string[];
+  recommendedAction?: string;
+}
+
+export interface LearningPreference {
+  userUid: string;
+  targetExam: string;
+  targetScore: string;
+  examDate?: string;
+  weeklyStudyDays: number;
+  dailyStudyMinutes: number;
+  weakSkillFocus: string;
+  motivationNote: string;
+  intensity: LearningPreferenceIntensity;
+  updatedAt: number;
 }
 
 export interface LearningPlan {
@@ -217,6 +282,7 @@ export interface AccountOverview {
   organizationRole?: OrganizationRole;
   organizationName?: string;
   priceLabel: string;
+  pricingNote: string;
   audienceLabel: string;
   featureSummary: string[];
   aiUsage: AiUsageSummary;
@@ -228,6 +294,7 @@ export interface DashboardSnapshot {
   myBooks: BookMetadata[];
   progressMap: Record<string, BookProgress>;
   learningPlan: LearningPlan | null;
+  learningPreference: LearningPreference | null;
   leaderboard: LeaderboardEntry[];
   masteryDist: MasteryDistribution;
   activityLogs: ActivityLog[];
@@ -312,6 +379,7 @@ export interface OrganizationInstructorSummary {
   organizationRole?: OrganizationRole;
   notifiedStudentCount: number;
   notifications7d: number;
+  assignedStudentCount: number;
 }
 
 export interface OrganizationDashboardSnapshot {
@@ -324,8 +392,11 @@ export interface OrganizationDashboardSnapshot {
   atRiskStudents: number;
   learningPlanCount: number;
   notifications7d: number;
+  assignmentCoverageRate: number;
+  unassignedStudents: number;
   instructors: OrganizationInstructorSummary[];
   atRiskStudentList: StudentSummary[];
+  studentAssignments: StudentSummary[];
 }
 
 export type WorksheetQuestionMode = 'EN_TO_JA' | 'JA_TO_EN' | 'SPELLING_HINT';
