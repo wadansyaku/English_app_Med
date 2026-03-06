@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { storage } from '../services/storage';
-import { extractVocabularyFromText } from '../services/gemini';
+import { extractVocabularyFromText, isAiUnavailableError } from '../services/gemini';
 import { AdminDashboardSnapshot, BookAccessScope, BookCatalogSource, BOOK_CATALOG_SOURCE_LABELS, StudentRiskLevel, SUBSCRIPTION_PLAN_LABELS, SubscriptionPlan } from '../types';
 import { BRAND } from '../config/brand';
 import { Activity, AlertTriangle, BarChart3, BellRing, BookOpen, Bot, Clock3, Database, FileText, Loader2, MessageSquareText, RefreshCw, ShieldAlert, Sparkles, Target, Trash2, Upload, Users } from 'lucide-react';
@@ -232,7 +232,10 @@ const AdminPanel: React.FC = () => {
       await fetchDashboard();
     } catch (error) {
       console.error(error);
-      setLog((previous) => [...previous, `エラー: ${(error as Error).message}`]);
+      const message = isAiUnavailableError(error)
+        ? 'AI教材生成はまだ利用できません。CSV一括に切り替えるか、Gemini 設定後に再試行してください。'
+        : (error as Error).message;
+      setLog((previous) => [...previous, `エラー: ${message}`]);
     } finally {
       setUploading(false);
     }

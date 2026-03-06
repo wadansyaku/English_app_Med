@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from 'react';
 import { AccountOverview, BOOK_CATALOG_SOURCE_LABELS, BookCatalogSource, BookMetadata, BookProgress, UserProfile, UserGrade, EnglishLevel, LearningPlan, LearningPreference, LearningPreferenceIntensity, LEARNING_PREFERENCE_INTENSITY_LABELS, LeaderboardEntry, MasteryDistribution, ActivityLog, InstructorNotification, STATUS_LABELS, GRADE_LABELS, SUBSCRIPTION_PLAN_LABELS, SubscriptionPlan, UserStudyMode, USER_STUDY_MODE_LABELS } from '../types';
 import { storage } from '../services/storage';
-import { extractVocabularyFromText, extractVocabularyFromMedia, generateLearningPlan } from '../services/gemini';
+import { extractVocabularyFromText, extractVocabularyFromMedia, generateLearningPlan, isAiUnavailableError } from '../services/gemini';
 import { BRAND } from '../config/brand';
 import { isAdSupportedPlan, isBusinessPlan } from '../config/subscription';
 import { Play, BookOpen, Star, Loader2, Zap, BrainCircuit, Trophy, Plus, Sparkles, FileText, Image as ImageIcon, UploadCloud, Flame, Trash2, Settings, RefreshCw, User, Book, Calendar, Target, ArrowRight, Library, ChevronDown, ChevronUp, BarChart, Activity, Edit2, X, Check, Medal, Crown } from 'lucide-react';
@@ -430,7 +430,11 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onSelectBook }) => {
     } catch (e: any) {
         console.error(e);
         const msg = e.message || "作成に失敗しました。";
-        setErrorMsg(msg.includes('429') ? "AIの利用上限(RPM)に達しました。時間をおいてください。" : msg);
+        if (isAiUnavailableError(e)) {
+          setErrorMsg("AI教材化はまだ利用できません。Gemini 設定後に再試行してください。");
+        } else {
+          setErrorMsg(msg.includes('429') ? "AIの利用上限(RPM)に達しました。時間をおいてください。" : msg);
+        }
     } finally {
         setCreating(false);
     }

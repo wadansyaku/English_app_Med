@@ -1,4 +1,5 @@
 import { BookMetadata, EnglishLevel, LearningPlan, LearningPreference, StudentRiskLevel, UserGrade, WordData } from '../types';
+import { buildFallbackLearningPlan } from '../utils/learningPlan';
 import { ApiError, apiPost } from './apiClient';
 
 export interface GeneratedContext {
@@ -35,6 +36,13 @@ const callAi = async <TResponse, TPayload = unknown>(action: string, payload?: T
 };
 
 const isRateLimitError = (error: unknown): boolean => error instanceof ApiError && error.status === 429;
+export const isAiUnavailableError = (error: unknown): boolean => {
+  if (error instanceof ApiError && error.status === 503) return true;
+  if (error instanceof Error) {
+    return error.message.includes('GEMINI_API_KEY') || error.message.includes('AI教材化はまだ利用できません');
+  }
+  return false;
+};
 
 export const generateGeminiSentence = async (
   word: string,
@@ -88,6 +96,9 @@ export const extractVocabularyFromText = async (rawText: string): Promise<Extrac
     if (isRateLimitError(error)) {
       throw new Error('AIの利用制限(RPM)に達しました。1分ほど待ってから再試行してください。(Error: 429)');
     }
+    if (isAiUnavailableError(error)) {
+      throw new Error('AI教材化はまだ利用できません。Gemini 設定後に再試行してください。');
+    }
     throw new Error(error instanceof Error ? error.message : 'AIによる抽出に失敗しました。');
   }
 };
@@ -98,6 +109,9 @@ export const extractVocabularyFromMedia = async (base64Data: string, mimeType: s
   } catch (error) {
     if (isRateLimitError(error)) {
       throw new Error('AIの利用制限(RPM)に達しました。1分ほど待ってから再試行してください。(Error: 429)');
+    }
+    if (isAiUnavailableError(error)) {
+      throw new Error('AI教材化はまだ利用できません。Gemini 設定後に再試行してください。');
     }
     throw new Error(error instanceof Error ? error.message : 'AIによる画像解析に失敗しました。');
   }
@@ -119,6 +133,15 @@ export const generateLearningPlan = async (
       learningPreference,
     });
   } catch (error) {
+    if (isAiUnavailableError(error)) {
+      return buildFallbackLearningPlan({
+        uid: '',
+        grade,
+        level,
+        availableBooks,
+        learningPreference,
+      });
+    }
     console.error('Plan generation failed:', error);
     return null;
   }

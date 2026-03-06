@@ -137,7 +137,7 @@ GitHub Actions 側では次を使います。
 
 Variables 未設定時は workflow 側で `medace-english-app` / `medace-db` を既定値として使います。
 
-ローカルから接続状態を確認する場合は `npm run cf:doctor` を使ってください。`GEMINI_API_KEY` は未設定でも warning 扱いで、GitHub / Cloudflare の接続と Pages / D1 の疎通を先に確認できます。
+ローカルから接続状態を確認する場合は `npm run cf:doctor` を使ってください。`GEMINI_API_KEY` は未設定でも warning 扱いで、GitHub / Cloudflare の接続と Pages / D1 の疎通を先に確認できます。なお、学習プラン生成は key 未設定時でも標準ロジックで継続でき、AI教材化だけが停止します。
 
 ### Frontend Environment Variables
 

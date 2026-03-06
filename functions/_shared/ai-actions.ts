@@ -1,6 +1,7 @@
 import { GoogleGenAI, Type } from '@google/genai';
 import { BookMetadata, EnglishLevel, LearningPlan, LearningPreference, StudentRiskLevel, SubscriptionPlan, UserGrade, WordData } from '../../types';
 import { AI_ACTION_ESTIMATES, getSubscriptionPolicy, MeteredAiAction } from '../../config/subscription';
+import { buildFallbackLearningPlan } from '../../utils/learningPlan';
 import { HttpError } from './http';
 import { AppEnv, DbUserRow } from './types';
 
@@ -60,11 +61,16 @@ const getUserSubscriptionPlan = (user: DbUserRow): SubscriptionPlan => {
   return (user.subscription_plan as SubscriptionPlan | null) || SubscriptionPlan.TOC_FREE;
 };
 
-const guardAiBudget = async (env: AppEnv, user: DbUserRow, action: MeteredAiAction): Promise<void> => {
+const guardAiActionAccess = (user: DbUserRow, action: MeteredAiAction): void => {
   const plan = getSubscriptionPolicy(getUserSubscriptionPlan(user));
   if (!plan.allowedAiActions.includes(action)) {
     throw new HttpError(403, `${plan.label} では ${AI_ACTION_ESTIMATES[action].label} を利用できません。`);
   }
+};
+
+const guardAiBudget = async (env: AppEnv, user: DbUserRow, action: MeteredAiAction): Promise<void> => {
+  guardAiActionAccess(user, action);
+  const plan = getSubscriptionPolicy(getUserSubscriptionPlan(user));
 
   const monthKey = currentMonthKey();
   const row = await env.DB.prepare(`
@@ -566,6 +572,16 @@ export const handleAiAction = async (env: AppEnv, user: DbUserRow, body: AiReque
     case 'extractVocabularyFromMedia':
       return runMeteredAiAction(env, user, 'extractVocabularyFromMedia', () => extractVocabularyFromMedia(env, body.payload));
     case 'generateLearningPlan':
+      if (!env.GEMINI_API_KEY) {
+        guardAiActionAccess(user, 'generateLearningPlan');
+        return buildFallbackLearningPlan({
+          uid: user.id,
+          grade: (body.payload?.grade || UserGrade.ADULT) as UserGrade,
+          level: (body.payload?.level || EnglishLevel.B1) as EnglishLevel,
+          availableBooks: Array.isArray(body.payload?.availableBooks) ? body.payload.availableBooks as BookMetadata[] : [],
+          learningPreference: (body.payload?.learningPreference || null) as LearningPreference | null,
+        });
+      }
       return runMeteredAiAction(env, user, 'generateLearningPlan', () => generateLearningPlan(env, body.payload));
     case 'generateInstructorFollowUp':
       return runMeteredAiAction(env, user, 'generateInstructorFollowUp', () => generateInstructorFollowUp(env, body.payload));
