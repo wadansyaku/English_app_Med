@@ -77,7 +77,7 @@ export enum BookAccessScope {
 
 export const BOOK_CATALOG_SOURCE_LABELS: Record<BookCatalogSource, string> = {
   [BookCatalogSource.STEADY_STUDY_ORIGINAL]: 'Steady Study Original',
-  [BookCatalogSource.LICENSED_PARTNER]: 'ライセンス教材',
+  [BookCatalogSource.LICENSED_PARTNER]: '公式教材',
   [BookCatalogSource.USER_GENERATED]: 'My単語帳',
 };
 

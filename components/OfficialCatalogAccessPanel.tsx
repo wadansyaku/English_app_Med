@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  BOOK_CATALOG_SOURCE_LABELS,
   BookCatalogSource,
   BookMetadata,
   UserProfile,
@@ -98,21 +97,13 @@ const OfficialCatalogAccessPanel: React.FC<OfficialCatalogAccessPanelProps> = ({
       ) : (
         <div className="mt-6 grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
           {officialBooks.map((book) => {
-            const catalogLabel = book.catalogSource ? BOOK_CATALOG_SOURCE_LABELS[book.catalogSource] : '公式教材';
             const fallbackDescription = book.catalogSource === BookCatalogSource.LICENSED_PARTNER
-              ? 'ライセンス済みの既存単語帳をそのまま確認できます。'
+              ? '既存の公式単語帳をそのまま確認できます。'
               : 'スターター導線で使うオリジナル単語データベース教材です。';
 
             return (
               <div key={book.id} className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${
-                    book.catalogSource === BookCatalogSource.LICENSED_PARTNER
-                      ? 'bg-slate-900 text-white'
-                      : 'border border-medace-100 bg-medace-50 text-medace-700'
-                  }`}>
-                    {catalogLabel}
-                  </span>
                   {book.isPriority && (
                     <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-bold text-amber-800">
                       推奨
@@ -120,7 +111,7 @@ const OfficialCatalogAccessPanel: React.FC<OfficialCatalogAccessPanelProps> = ({
                   )}
                 </div>
 
-                <div className="mt-4 text-lg font-black tracking-tight text-slate-950">{book.title}</div>
+                <div className="mt-3 text-lg font-black tracking-tight text-slate-950">{book.title}</div>
                 <div className="mt-2 text-sm leading-relaxed text-slate-500">
                   {book.description || fallbackDescription}
                 </div>

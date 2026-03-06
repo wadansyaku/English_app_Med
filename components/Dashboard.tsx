@@ -1,6 +1,6 @@
 
 import React, { useEffect, useState } from 'react';
-import { AccountOverview, BOOK_CATALOG_SOURCE_LABELS, BookCatalogSource, BookMetadata, BookProgress, UserProfile, UserGrade, EnglishLevel, LearningPlan, LearningPreference, LearningPreferenceIntensity, LEARNING_PREFERENCE_INTENSITY_LABELS, LeaderboardEntry, MasteryDistribution, ActivityLog, InstructorNotification, STATUS_LABELS, GRADE_LABELS, SUBSCRIPTION_PLAN_LABELS, SubscriptionPlan, UserStudyMode, USER_STUDY_MODE_LABELS } from '../types';
+import { AccountOverview, BookCatalogSource, BookMetadata, BookProgress, UserProfile, UserGrade, EnglishLevel, LearningPlan, LearningPreference, LearningPreferenceIntensity, LEARNING_PREFERENCE_INTENSITY_LABELS, LeaderboardEntry, MasteryDistribution, ActivityLog, InstructorNotification, STATUS_LABELS, GRADE_LABELS, SUBSCRIPTION_PLAN_LABELS, SubscriptionPlan, UserStudyMode, USER_STUDY_MODE_LABELS } from '../types';
 import { storage } from '../services/storage';
 import { extractVocabularyFromText, extractVocabularyFromMedia, generateLearningPlan, isAiUnavailableError } from '../services/gemini';
 import { BRAND } from '../config/brand';
@@ -28,7 +28,6 @@ interface BookCardProps {
 }
 
 const BookCard: React.FC<BookCardProps> = ({ book, isMine, progress, onDelete, onSelect }) => {
-  const catalogLabel = book.catalogSource ? BOOK_CATALOG_SOURCE_LABELS[book.catalogSource] : null;
   const isLicensed = book.catalogSource === BookCatalogSource.LICENSED_PARTNER;
   return (
       <div className="group bg-white rounded-xl border border-slate-200 shadow-sm hover:shadow-lg hover:-translate-y-1 transition-all duration-300 overflow-hidden flex flex-col relative h-full">
@@ -59,18 +58,11 @@ const BookCard: React.FC<BookCardProps> = ({ book, isMine, progress, onDelete, o
                   </div>
               </div>
               
-              <h3 className="text-xl font-bold text-slate-800 mb-1 group-hover:text-medace-600 transition-colors truncate" title={book.title}>{book.title}</h3>
-              {catalogLabel && !isMine && (
-                <div className="mb-2 flex flex-wrap gap-2">
-                  <span className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${isLicensed ? 'bg-slate-900 text-white' : 'bg-medace-50 text-medace-700 border border-medace-100'}`}>
-                    {catalogLabel}
-                  </span>
-                </div>
-              )}
+              <h3 className="text-xl font-bold text-slate-800 mb-2 group-hover:text-medace-600 transition-colors truncate" title={book.title}>{book.title}</h3>
               <p className="text-sm text-slate-500 mb-5 line-clamp-2 h-10">
                  {isMine 
                     ? (book.sourceContext ? `AI分析: ${book.sourceContext}` : 'オリジナル単語帳') 
-                    : (book.description || (isLicensed ? 'ビジネス版向けのライセンス教材' : 'ビジネス版向けの公式教材'))}
+                    : (book.description || (isLicensed ? 'ビジネス版向けの既存公式教材' : 'ビジネス版向けの公式教材'))}
               </p>
 
               <div className="space-y-2">

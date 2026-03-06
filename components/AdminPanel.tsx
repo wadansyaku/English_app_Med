@@ -307,7 +307,7 @@ const AdminPanel: React.FC = () => {
                 <div className="mt-1 text-sm">
                   {source === BookCatalogSource.STEADY_STUDY_ORIGINAL
                     ? 'Steady Study原本として、ビジネス限定の公式教材カタログへ登録します。'
-                    : 'ライセンス取得済み教材として、ビジネス限定の公式教材カタログへ登録します。'}
+                    : '既存の公式教材として、ビジネス限定の公式教材カタログへ登録します。'}
                 </div>
               </button>
             ))}

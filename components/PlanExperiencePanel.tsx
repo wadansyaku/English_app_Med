@@ -86,7 +86,7 @@ const PlanExperiencePanel: React.FC<PlanExperiencePanelProps> = ({
       '広告なしで集中しやすい学習画面',
       '講師フォロー通知とグループ進行に対応',
       hasBusinessCatalog
-        ? 'Steady Study Original とライセンス教材をビジネス限定で配布'
+        ? 'Steady Study Original と既存公式教材をビジネス限定で配布'
         : '正式教材カタログは本導入後に開放',
     ];
 

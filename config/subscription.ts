@@ -42,7 +42,7 @@ export const SUBSCRIPTION_POLICIES: Record<SubscriptionPlan, SubscriptionPolicy>
       'Steady Study Original のスターター教材と通常学習を無理なく始められます',
       '学習プランはAIではなく標準ロジックで自動提案します',
       'AIは例文生成と小さなクイズ補助を中心に使えます',
-      'フルのライセンス教材カタログは含めず、低コスト運用を優先します',
+      'フルの既存公式教材カタログは含めず、低コスト運用を優先します',
     ],
   },
   [SubscriptionPlan.TOC_PAID]: {
@@ -65,7 +65,7 @@ export const SUBSCRIPTION_POLICIES: Record<SubscriptionPlan, SubscriptionPolicy>
     featureSummary: [
       'スターター公式教材に加えて、個人向けのAI教材化と学習プラン作成まで利用できます',
       '画像やPDFからの抽出にも対応します',
-      'フルのライセンス教材ではなく、自作教材とスターター教材中心で学習を広げます',
+      'フルの既存公式教材ではなく、自作教材とスターター教材中心で学習を広げます',
     ],
   },
   [SubscriptionPlan.TOB_FREE]: {
