@@ -1,0 +1,153 @@
+import { SubscriptionPlan } from '../types';
+
+export type MeteredAiAction =
+  | 'generateGeminiSentence'
+  | 'generateWordImage'
+  | 'generateAIQuiz'
+  | 'extractVocabularyFromText'
+  | 'extractVocabularyFromMedia'
+  | 'generateLearningPlan'
+  | 'generateInstructorFollowUp';
+
+export interface SubscriptionPolicy {
+  plan: SubscriptionPlan;
+  label: string;
+  audienceLabel: string;
+  priceLabel: string;
+  monthlyAiBudgetMilliYen: number;
+  allowedAiActions: MeteredAiAction[];
+  featureSummary: string[];
+}
+
+export interface AiActionEstimate {
+  label: string;
+  estimatedCostMilliYen: number;
+  model: string;
+}
+
+export const SUBSCRIPTION_POLICIES: Record<SubscriptionPlan, SubscriptionPolicy> = {
+  [SubscriptionPlan.TOC_FREE]: {
+    plan: SubscriptionPlan.TOC_FREE,
+    label: 'フリープラン',
+    audienceLabel: '個人向け',
+    priceLabel: '無料',
+    monthlyAiBudgetMilliYen: 1200,
+    allowedAiActions: ['generateGeminiSentence', 'generateAIQuiz'],
+    featureSummary: [
+      '初回診断と通常学習を無理なく始められます',
+      'AIは例文生成と小さなクイズ補助を中心に使えます',
+      '重いAI機能は抑えめにして、安定した運用を優先します',
+    ],
+  },
+  [SubscriptionPlan.TOC_PAID]: {
+    plan: SubscriptionPlan.TOC_PAID,
+    label: 'パーソナルプラン',
+    audienceLabel: '個人向け',
+    priceLabel: '拡張利用',
+    monthlyAiBudgetMilliYen: 12000,
+    allowedAiActions: [
+      'generateGeminiSentence',
+      'generateAIQuiz',
+      'extractVocabularyFromText',
+      'extractVocabularyFromMedia',
+      'generateLearningPlan',
+    ],
+    featureSummary: [
+      '個人向けのAI教材化と学習プラン作成まで利用できます',
+      '画像やPDFからの抽出にも対応します',
+      '日々の学習を広げつつ、使いすぎは自動で抑えます',
+    ],
+  },
+  [SubscriptionPlan.TOB_FREE]: {
+    plan: SubscriptionPlan.TOB_FREE,
+    label: 'ビジネスフリープラン',
+    audienceLabel: '教室・法人向け',
+    priceLabel: '導入準備',
+    monthlyAiBudgetMilliYen: 8000,
+    allowedAiActions: [
+      'generateGeminiSentence',
+      'generateAIQuiz',
+      'generateLearningPlan',
+      'generateInstructorFollowUp',
+    ],
+    featureSummary: [
+      '講師フォロー通知の下書きを限定的に使えます',
+      '導入前の検証に必要な範囲へ絞っています',
+      '教材生成系は控えめにして、安定運用を優先します',
+    ],
+  },
+  [SubscriptionPlan.TOB_PAID]: {
+    plan: SubscriptionPlan.TOB_PAID,
+    label: 'ビジネスプラン',
+    audienceLabel: '教室・法人向け',
+    priceLabel: '本導入',
+    monthlyAiBudgetMilliYen: 40000,
+    allowedAiActions: [
+      'generateGeminiSentence',
+      'generateAIQuiz',
+      'extractVocabularyFromText',
+      'extractVocabularyFromMedia',
+      'generateLearningPlan',
+      'generateInstructorFollowUp',
+    ],
+    featureSummary: [
+      '講師フォロー通知と教材生成をどちらも使えます',
+      '教室運用に必要なAI利用枠を広めに確保します',
+      '高コスト機能も月次の利用枠で自動調整します',
+    ],
+  },
+};
+
+export const AI_ACTION_ESTIMATES: Record<MeteredAiAction, AiActionEstimate> = {
+  generateGeminiSentence: {
+    label: '例文生成',
+    estimatedCostMilliYen: 120,
+    model: 'gemini-2.5-flash',
+  },
+  generateWordImage: {
+    label: '画像生成',
+    estimatedCostMilliYen: 2400,
+    model: 'imagen-4.0-generate-001',
+  },
+  generateAIQuiz: {
+    label: 'AIクイズ',
+    estimatedCostMilliYen: 220,
+    model: 'gemini-2.5-flash',
+  },
+  extractVocabularyFromText: {
+    label: 'テキスト抽出',
+    estimatedCostMilliYen: 650,
+    model: 'gemini-2.5-flash',
+  },
+  extractVocabularyFromMedia: {
+    label: '画像/PDF抽出',
+    estimatedCostMilliYen: 1100,
+    model: 'gemini-2.5-flash',
+  },
+  generateLearningPlan: {
+    label: '学習プラン生成',
+    estimatedCostMilliYen: 380,
+    model: 'gemini-2.5-flash',
+  },
+  generateInstructorFollowUp: {
+    label: '講師フォロー通知',
+    estimatedCostMilliYen: 260,
+    model: 'gemini-2.5-flash',
+  },
+};
+
+export const getSubscriptionPolicy = (plan: SubscriptionPlan | null | undefined): SubscriptionPolicy => {
+  return SUBSCRIPTION_POLICIES[plan || SubscriptionPlan.TOC_FREE];
+};
+
+export const isBusinessPlan = (plan: SubscriptionPlan | null | undefined): boolean => {
+  return plan === SubscriptionPlan.TOB_FREE || plan === SubscriptionPlan.TOB_PAID;
+};
+
+export const isPaidPlan = (plan: SubscriptionPlan | null | undefined): boolean => {
+  return plan === SubscriptionPlan.TOC_PAID || plan === SubscriptionPlan.TOB_PAID;
+};
+
+export const isAdSupportedPlan = (plan: SubscriptionPlan | null | undefined): boolean => {
+  return plan === SubscriptionPlan.TOC_FREE;
+};

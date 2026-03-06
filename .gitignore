@@ -11,6 +11,12 @@ node_modules
 dist
 dist-ssr
 *.local
+.wrangler
+.dev.vars
+.playwright-cli/
+output/playwright/
+tmp
+_worker.bundle
 
 # Editor directories and files
 .vscode/*

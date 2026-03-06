@@ -1,362 +1,523 @@
-
-import React, { useState, useEffect } from 'react';
-import { UserProfile, UserGrade, EnglishLevel, GRADE_LABELS } from '../types';
-import { generateDiagnosticTest, generateAdvancedDiagnosticTest, evaluateAdvancedTest, DiagnosticQuestion } from '../services/gemini';
+import React, { useState } from 'react';
+import { CheckCircle2, ChevronLeft, ChevronRight, Compass, GraduationCap, Radar, Sparkles, Target } from 'lucide-react';
+import { DIAGNOSTIC_PHASE_LABELS, DIAGNOSTIC_QUESTIONS, SELF_ASSESSMENT_OPTIONS, SelfAssessmentKey, evaluateDiagnostic } from '../data/diagnostic';
+import { EnglishLevel, GRADE_LABELS, UserGrade, UserProfile } from '../types';
 import { storage } from '../services/storage';
-import { GraduationCap, ChevronRight, Loader2, CheckCircle2, BrainCircuit, PenTool, Check, Sparkles } from 'lucide-react';
 
 interface OnboardingProps {
   user: UserProfile;
   onComplete: (updatedUser: UserProfile) => void;
-  isRetake?: boolean; // New prop for Retake mode
-  historySummary?: string; // Context for AI
+  isRetake?: boolean;
+  historySummary?: string;
 }
 
 const GRADES = [
-  { id: UserGrade.JHS1, label: GRADE_LABELS[UserGrade.JHS1], desc: "英語を始めたばかり" },
-  { id: UserGrade.JHS2, label: GRADE_LABELS[UserGrade.JHS2], desc: "基礎を固めたい" },
-  { id: UserGrade.JHS3, label: GRADE_LABELS[UserGrade.JHS3], desc: "受験対策・長文挑戦" },
-  { id: UserGrade.SHS1, label: GRADE_LABELS[UserGrade.SHS1], desc: "文法・語彙を強化" },
-  { id: UserGrade.SHS2, label: GRADE_LABELS[UserGrade.SHS2], desc: "応用力をつけたい" },
-  { id: UserGrade.SHS3, label: GRADE_LABELS[UserGrade.SHS3], desc: "大学受験レベル" },
-  { id: UserGrade.UNIVERSITY, label: GRADE_LABELS[UserGrade.UNIVERSITY], desc: "アカデミック/TOEIC" },
-  { id: UserGrade.ADULT, label: GRADE_LABELS[UserGrade.ADULT], desc: "ビジネス/教養" },
+  { id: UserGrade.JHS1, label: GRADE_LABELS[UserGrade.JHS1], desc: '英語を始めたばかり' },
+  { id: UserGrade.JHS2, label: GRADE_LABELS[UserGrade.JHS2], desc: '基礎を固めたい' },
+  { id: UserGrade.JHS3, label: GRADE_LABELS[UserGrade.JHS3], desc: '受験対策・長文挑戦' },
+  { id: UserGrade.SHS1, label: GRADE_LABELS[UserGrade.SHS1], desc: '文法・語彙を強化' },
+  { id: UserGrade.SHS2, label: GRADE_LABELS[UserGrade.SHS2], desc: '応用力をつけたい' },
+  { id: UserGrade.SHS3, label: GRADE_LABELS[UserGrade.SHS3], desc: '大学受験レベル' },
+  { id: UserGrade.UNIVERSITY, label: GRADE_LABELS[UserGrade.UNIVERSITY], desc: 'アカデミック / TOEIC' },
+  { id: UserGrade.ADULT, label: GRADE_LABELS[UserGrade.ADULT], desc: 'ビジネス / 教養' },
 ];
 
-const Onboarding: React.FC<OnboardingProps> = ({ user, onComplete, isRetake = false, historySummary = "" }) => {
-  // If retake, skip GRADE selection
-  const [step, setStep] = useState<'GRADE' | 'QUIZ_PREP' | 'QUIZ' | 'EVALUATING' | 'RESULT'>(isRetake ? 'QUIZ_PREP' : 'GRADE');
-  const [selectedGrade, setSelectedGrade] = useState<UserGrade | null>(isRetake ? (user.grade || UserGrade.ADULT) : null);
-  
-  // Quiz State
-  const [questions, setQuestions] = useState<DiagnosticQuestion[]>([]);
-  const [currentQIndex, setCurrentQIndex] = useState(0);
+const LEVEL_BADGE_STYLE: Record<EnglishLevel, string> = {
+  [EnglishLevel.A1]: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  [EnglishLevel.A2]: 'bg-lime-50 text-lime-700 border-lime-200',
+  [EnglishLevel.B1]: 'bg-sky-50 text-sky-700 border-sky-200',
+  [EnglishLevel.B2]: 'bg-indigo-50 text-indigo-700 border-indigo-200',
+  [EnglishLevel.C1]: 'bg-rose-50 text-rose-700 border-rose-200',
+  [EnglishLevel.C2]: 'bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200',
+};
+
+const Onboarding: React.FC<OnboardingProps> = ({ user, onComplete, isRetake = false }) => {
+  const [step, setStep] = useState<'PROFILE' | 'TEST' | 'RESULT'>('PROFILE');
+  const [selectedGrade, setSelectedGrade] = useState<UserGrade>(user.grade || UserGrade.ADULT);
+  const [selfAssessment, setSelfAssessment] = useState<SelfAssessmentKey | null>(null);
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [userAnswers, setUserAnswers] = useState<Record<string, string>>({});
-  const [textInput, setTextInput] = useState("");
-  
-  const [loading, setLoading] = useState(false);
-  // Use an index for dynamic loading messages
-  const [loadingMsgIndex, setLoadingMsgIndex] = useState(0);
   const [finalLevel, setFinalLevel] = useState<EnglishLevel | null>(null);
+  const [result, setResult] = useState<ReturnType<typeof evaluateDiagnostic> | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
 
-  // Dynamic Loading Messages
-  const LOADING_STEPS_PREP = [
-      "ユーザーの学習データを分析しています...",
-      "AIが最適な出題範囲を選定中...",
-      "問題生成中 (Gemini 2.5 Flash)...",
-      "選択肢の整合性をチェックしています...",
-      "準備完了！"
-  ];
-  const LOADING_STEPS_EVAL = [
-      "AIが答案を採点しています...",
-      "文法と語彙力を詳細に分析中...",
-      "CEFRレベルとの照合を行っています...",
-      "あなた専用のカリキュラムを構築中..."
-  ];
+  const currentQuestion = DIAGNOSTIC_QUESTIONS[currentQuestionIndex];
+  const currentAnswer = currentQuestion ? userAnswers[currentQuestion.id] : '';
+  const answeredCount = Object.keys(userAnswers).length;
+  const progressPercent = Math.round((((step === 'RESULT' ? DIAGNOSTIC_QUESTIONS.length : currentQuestionIndex + 1)) / DIAGNOSTIC_QUESTIONS.length) * 100);
 
-  useEffect(() => {
-      let interval: any;
-      if (loading) {
-          const steps = step === 'EVALUATING' ? LOADING_STEPS_EVAL : LOADING_STEPS_PREP;
-          // Faster rotation for better UX feeling (1.5s)
-          interval = setInterval(() => {
-              setLoadingMsgIndex(prev => (prev + 1) % steps.length);
-          }, 1500);
-      } else {
-          setLoadingMsgIndex(0);
-      }
-      return () => clearInterval(interval);
-  }, [loading, step]);
-
-  const handleGradeSelect = async (grade: UserGrade) => {
-    setSelectedGrade(grade);
-    setStep('QUIZ_PREP');
+  const handleStart = () => {
+    if (!selectedGrade || !selfAssessment) return;
+    setCurrentQuestionIndex(0);
+    setUserAnswers({});
+    setResult(null);
+    setFinalLevel(null);
+    setStep('TEST');
   };
 
-  // Start Quiz Logic
-  const startQuiz = async () => {
-    if (!selectedGrade) return;
-    setLoading(true);
-    
-    try {
-      let q: DiagnosticQuestion[] = [];
-      
-      if (isRetake) {
-        // Advanced Test (10 questions, mixed types)
-        q = await generateAdvancedDiagnosticTest(selectedGrade, historySummary);
-      } else {
-        // Simple Test (5 questions, MCQ)
-        q = await generateDiagnosticTest(selectedGrade);
-      }
-
-      if (q && q.length > 0) {
-        setQuestions(q);
-        setStep('QUIZ');
-      } else {
-        throw new Error("Quiz generation failed");
-      }
-    } catch (e) {
-      console.error(e);
-      alert("AIの応答が遅れています。簡易モードで開始します。");
-      finishOnboarding(EnglishLevel.A2); // Fallback
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleAnswer = (answer: string) => {
-    const currentQ = questions[currentQIndex];
-    
-    // Store answer
-    setUserAnswers(prev => ({
-        ...prev,
-        [currentQ.id]: answer
+  const handleSelectAnswer = (answer: string) => {
+    setUserAnswers((prev) => ({
+      ...prev,
+      [currentQuestion.id]: answer,
     }));
-
-    // Clear text input if any
-    setTextInput("");
-
-    if (currentQIndex < questions.length - 1) {
-      setCurrentQIndex(p => p + 1);
-    } else {
-      submitQuiz();
-    }
   };
 
-  const submitQuiz = async () => {
-    setStep('EVALUATING');
-    setLoading(true);
-    
+  const handleNext = () => {
+    if (!currentAnswer) return;
+    if (currentQuestionIndex < DIAGNOSTIC_QUESTIONS.length - 1) {
+      setCurrentQuestionIndex((prev) => prev + 1);
+      return;
+    }
+
+    const evaluation = evaluateDiagnostic(userAnswers, selfAssessment!, selectedGrade);
+    setResult(evaluation);
+    setFinalLevel(evaluation.level);
+    setStep('RESULT');
+  };
+
+  const handleBack = () => {
+    if (currentQuestionIndex > 0) {
+      setCurrentQuestionIndex((prev) => prev - 1);
+      return;
+    }
+    setStep('PROFILE');
+  };
+
+  const saveResult = async () => {
+    if (!finalLevel) return;
+    setIsSaving(true);
+
     try {
-        let level: EnglishLevel;
-        // Small delay to allow UI to render the Loading State first
-        await new Promise(r => setTimeout(r, 500));
+      const updatedUser: UserProfile = {
+        ...user,
+        grade: selectedGrade,
+        englishLevel: finalLevel,
+        needsOnboarding: false,
+      };
 
-        if (isRetake) {
-            // Advanced AI Grading
-            level = await evaluateAdvancedTest(selectedGrade!, questions, userAnswers);
-        } else {
-            // Simple Score-based Grading for MCQ
-            let score = 0;
-            questions.forEach(q => {
-                if (userAnswers[q.id] === q.answer) score++;
-            });
-            level = determineSimpleLevel(score, selectedGrade!);
-        }
-
-        setFinalLevel(level);
-        
-        // Save Result to DB immediately
-        const updatedUser: UserProfile = {
-            ...user,
-            grade: selectedGrade || UserGrade.ADULT,
-            englishLevel: level,
-            needsOnboarding: false
-        };
-        await storage.updateSessionUser(updatedUser);
-        
-        // Artificial delay to ensure user sees the "Evaluation complete" message
-        await new Promise(r => setTimeout(r, 1000));
-        
-        setLoading(false);
-        setStep('RESULT');
-
-    } catch (e) {
-        console.error("Evaluation error", e);
-        finishOnboarding(EnglishLevel.B1); // Fail safe
+      await storage.updateSessionUser(updatedUser);
+      onComplete(updatedUser);
+    } finally {
+      setIsSaving(false);
     }
   };
 
-  const determineSimpleLevel = (score: number, grade: UserGrade): EnglishLevel => {
-    let baseLevel = EnglishLevel.A1;
-    if ([UserGrade.JHS3, UserGrade.SHS1].includes(grade)) baseLevel = EnglishLevel.A2;
-    if ([UserGrade.SHS2, UserGrade.SHS3, UserGrade.UNIVERSITY, UserGrade.ADULT].includes(grade)) baseLevel = EnglishLevel.B1;
-
-    const levels = Object.values(EnglishLevel);
-    let levelIndex = levels.indexOf(baseLevel);
-    
-    if (score >= 4) levelIndex = Math.min(levelIndex + 1, levels.length - 1);
-    if (score <= 1) levelIndex = Math.max(levelIndex - 1, 0);
-
-    return levels[levelIndex];
-  };
-
-  const finishOnboarding = async (level: EnglishLevel) => {
-    const updatedUser: UserProfile = {
-        ...user,
-        grade: selectedGrade || UserGrade.ADULT,
-        englishLevel: level,
-        needsOnboarding: false
-    };
-    
-    // Ensure storage is updated before notifying App
-    await storage.updateSessionUser(updatedUser);
-    onComplete(updatedUser);
-  };
-
-  if (loading) {
-    const steps = step === 'EVALUATING' ? LOADING_STEPS_EVAL : LOADING_STEPS_PREP;
-    
+  if (step === 'PROFILE') {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-slate-50 p-6">
-        <div className="max-w-md w-full bg-white p-8 rounded-3xl shadow-xl text-center">
-            <div className="relative w-20 h-20 mx-auto mb-6">
-                 <div className="absolute inset-0 border-4 border-slate-100 rounded-full"></div>
-                 <div className="absolute inset-0 border-4 border-medace-500 rounded-full border-t-transparent animate-spin"></div>
-                 <Sparkles className="absolute inset-0 m-auto w-8 h-8 text-medace-500 animate-pulse" />
-            </div>
-            
-            <h3 className="text-xl font-bold text-slate-800 mb-6">AIが処理しています...</h3>
-            
-            <div className="space-y-3 text-left">
-                {steps.map((msg, idx) => (
-                    <div key={idx} className={`flex items-center gap-3 transition-opacity duration-500 ${idx <= loadingMsgIndex ? 'opacity-100' : 'opacity-30'}`}>
-                        <div className={`w-5 h-5 rounded-full flex items-center justify-center border ${idx < loadingMsgIndex ? 'bg-medace-500 border-medace-500 text-white' : idx === loadingMsgIndex ? 'border-medace-500 text-medace-500' : 'border-slate-300'}`}>
-                            {idx < loadingMsgIndex ? <Check className="w-3 h-3" /> : idx === loadingMsgIndex ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
-                        </div>
-                        <span className={`text-sm font-medium ${idx === loadingMsgIndex ? 'text-medace-600 font-bold' : 'text-slate-500'}`}>{msg}</span>
-                    </div>
+      <div className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(246,109,11,0.18),_transparent_34%),linear-gradient(180deg,#fffaf5_0%,#fff 48%,#fff3e2_100%)] py-10 px-4">
+        <div className="max-w-6xl mx-auto grid xl:grid-cols-[0.96fr_1.04fr] gap-6">
+          <div className="relative overflow-hidden rounded-[32px] bg-[linear-gradient(145deg,#2F1609_0%,#66321A_42%,#F66D0B_100%)] p-8 text-white shadow-[0_28px_80px_rgba(228,94,4,0.24)] md:p-10">
+            <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,_rgba(255,255,255,0.22),_transparent_28%),radial-gradient(circle_at_bottom_left,_rgba(255,191,82,0.16),_transparent_24%)]"></div>
+            <div className="relative">
+              <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-bold tracking-[0.18em] uppercase text-white/70">
+                <Radar className="w-4 h-4" /> Placement Design
+              </div>
+              <h1 className="mt-6 text-3xl md:text-4xl font-black tracking-tight leading-tight">
+                {isRetake ? '学習スタート帯を再診断する' : '最初のスタート帯を、短時間で正確に決める'}
+              </h1>
+              <p className="mt-4 text-sm md:text-base text-white/78 leading-relaxed max-w-lg">
+                CEFR の自己評価の考え方と placement test の定番形式を参考に、文法・語彙・読解を 12 問で確認します。
+                これは公式資格判定ではなく、MedAce で学習を始めるための推定レベルです。
+              </p>
+
+              <div className="mt-8 grid gap-3">
+                {[
+                  '問題は事前作成済みで、AI生成のブレがない',
+                  '文法・語彙・読解をバランスよく確認する',
+                  '結果画面で「なぜその帯か」を説明する',
+                ].map((item) => (
+                  <div key={item} className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                    <CheckCircle2 className="w-5 h-5 text-medace-300 shrink-0" />
+                    <span className="text-sm text-white/88">{item}</span>
+                  </div>
                 ))}
+              </div>
+
+              <div className="mt-8 rounded-3xl bg-white/5 border border-white/10 p-5">
+                <p className="text-xs font-bold tracking-[0.18em] uppercase text-white/60">What You Get</p>
+                <div className="mt-4 grid sm:grid-cols-3 gap-3 text-sm">
+                  <div className="rounded-2xl bg-white/5 px-4 py-4">
+                    <div className="text-2xl font-black text-white">12</div>
+                    <div className="text-white/70 mt-1">prebuilt questions</div>
+                  </div>
+                  <div className="rounded-2xl bg-white/5 px-4 py-4">
+                    <div className="text-2xl font-black text-white">4-5分</div>
+                    <div className="text-white/70 mt-1">on average</div>
+                  </div>
+                  <div className="rounded-2xl bg-white/5 px-4 py-4">
+                    <div className="text-2xl font-black text-white">3軸</div>
+                    <div className="text-white/70 mt-1">grammar / vocab / reading</div>
+                  </div>
+                </div>
+              </div>
             </div>
+          </div>
+
+          <div className="rounded-[32px] border border-slate-200 bg-white/95 backdrop-blur p-6 md:p-8 shadow-xl">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div>
+                <p className="text-xs font-bold tracking-[0.18em] uppercase text-slate-400">Setup</p>
+                <h2 className="mt-2 text-2xl md:text-3xl font-black text-slate-900 tracking-tight">
+                  {isRetake ? 'いまの実感を更新する' : '学年と現在地を選ぶ'}
+                </h2>
+              </div>
+              <div className="rounded-full bg-medace-50 border border-medace-100 px-4 py-2 text-sm font-bold text-medace-700">
+                まずは 2 ステップ
+              </div>
+            </div>
+
+            <div className="mt-8">
+              <div className="flex items-center gap-2 mb-4">
+                <GraduationCap className="w-5 h-5 text-medace-600" />
+                <h3 className="text-lg font-bold text-slate-900">1. 学年・立場</h3>
+              </div>
+              <div className="grid sm:grid-cols-2 gap-3">
+                {GRADES.map((grade) => (
+                  <button
+                    key={grade.id}
+                    type="button"
+                    onClick={() => setSelectedGrade(grade.id)}
+                    className={`rounded-2xl border px-4 py-4 text-left transition-all ${selectedGrade === grade.id ? 'border-medace-500 bg-medace-50 shadow-sm' : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'}`}
+                  >
+                    <div className="font-bold text-slate-900">{grade.label}</div>
+                    <div className="text-sm text-slate-500 mt-1">{grade.desc}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="mt-8">
+              <div className="flex items-center gap-2 mb-4">
+                <Compass className="w-5 h-5 text-medace-600" />
+                <h3 className="text-lg font-bold text-slate-900">2. いまの実感</h3>
+              </div>
+              <div className="grid gap-3">
+                {SELF_ASSESSMENT_OPTIONS.map((option) => (
+                  <button
+                    key={option.id}
+                    type="button"
+                    onClick={() => setSelfAssessment(option.id)}
+                    className={`rounded-3xl border px-5 py-4 text-left transition-all ${selfAssessment === option.id ? 'border-medace-900 bg-[linear-gradient(135deg,#66321A_0%,#F66D0B_100%)] text-white shadow-[0_18px_40px_rgba(228,94,4,0.18)]' : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'}`}
+                  >
+                    <div className="flex items-center justify-between gap-4">
+                      <div>
+                        <div className={`font-bold ${selfAssessment === option.id ? 'text-white' : 'text-slate-900'}`}>{option.title}</div>
+                        <p className={`mt-1 text-sm leading-relaxed ${selfAssessment === option.id ? 'text-white/72' : 'text-slate-500'}`}>{option.description}</p>
+                      </div>
+                      <span className={`shrink-0 rounded-full border px-2.5 py-1 text-xs font-bold ${selfAssessment === option.id ? 'border-white/20 text-white/88 bg-white/10' : 'border-slate-200 text-slate-500 bg-slate-50'}`}>
+                        {option.estimatedBand}
+                      </span>
+                    </div>
+                    <div className={`mt-3 text-xs font-bold tracking-wide ${selfAssessment === option.id ? 'text-medace-200' : 'text-medace-600'}`}>
+                      {option.helper}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="mt-8 rounded-3xl border border-medace-100 bg-medace-50/70 px-5 py-4">
+              <div className="flex items-start gap-3">
+                <Target className="w-5 h-5 text-medace-600 mt-0.5 shrink-0" />
+                <div>
+                  <div className="font-bold text-slate-900">診断の設計方針</div>
+                  <p className="mt-1 text-sm text-slate-600 leading-relaxed">
+                    最初は易しめから入り、後半で抽象度を上げます。タイピング問題は入れず、最初の離脱を防ぐために選択式で統一しています。
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleStart}
+              disabled={!selfAssessment}
+              className="mt-8 flex w-full items-center justify-center gap-2 rounded-2xl bg-[linear-gradient(135deg,#66321A_0%,#F66D0B_100%)] py-4 text-base font-bold text-white shadow-lg transition-transform hover:scale-[1.01] disabled:opacity-50 disabled:hover:scale-100"
+            >
+              診断を始める <ChevronRight className="w-5 h-5" />
+            </button>
+          </div>
         </div>
       </div>
     );
   }
 
-  if (step === 'RESULT' && finalLevel) {
-      return (
-          <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-              <div className="max-w-md w-full bg-white rounded-3xl shadow-2xl p-10 text-center animate-in zoom-in">
-                  <div className="w-24 h-24 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6">
-                      <CheckCircle2 className="w-12 h-12 text-green-600" />
-                  </div>
-                  <h2 className="text-2xl font-bold text-slate-800 mb-2">診断完了！</h2>
-                  <p className="text-slate-500 mb-6">あなたの現在の推奨レベルは...</p>
-                  
-                  <div className="text-6xl font-black text-medace-600 mb-8 tracking-tight">
-                      {finalLevel}
-                  </div>
-                  
-                  <button 
-                    onClick={() => finishOnboarding(finalLevel)}
-                    className="w-full py-4 bg-medace-600 text-white rounded-xl font-bold shadow-lg hover:bg-medace-700 transition-all"
-                  >
-                      学習を開始する
-                  </button>
+  if (step === 'RESULT' && result && finalLevel) {
+    return (
+      <div className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(246,109,11,0.16),_transparent_32%),linear-gradient(180deg,#fffaf4_0%,#fff 42%,#fff3e2_100%)] px-4 py-10">
+        <div className="max-w-6xl mx-auto space-y-6">
+          <div className="rounded-[32px] border border-slate-200 bg-white p-6 md:p-8 shadow-xl">
+            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
+              <div>
+                <p className="text-xs font-bold tracking-[0.18em] uppercase text-slate-400">Placement Result</p>
+                <h2 className="mt-2 text-3xl md:text-4xl font-black tracking-tight text-slate-950">推定スタート帯は {finalLevel}</h2>
+                <p className="mt-3 text-sm md:text-base text-slate-600 max-w-2xl leading-relaxed">{result.summaryBody}</p>
               </div>
-          </div>
-      );
-  }
 
-  return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-      <div className="max-w-2xl w-full bg-white rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
-        
-        {/* Header */}
-        <div className="bg-slate-900 p-6 text-center flex-shrink-0">
-          <h1 className="text-xl font-bold text-white mb-2">
-              {isRetake ? "スキルチェック (再診断)" : "MedAce Pro セットアップ"}
-          </h1>
-          <div className="flex justify-center gap-2">
-             {/* Progress Dots Logic */}
-             {[1, 2, 3].map(i => (
-                <div key={i} className={`h-1 w-12 rounded-full transition-colors ${
-                    (step === 'GRADE' && i === 1) || (step === 'QUIZ_PREP' && i === 1) || (step === 'QUIZ' && i === 2) || (step === 'EVALUATING' && i === 3)
-                    ? 'bg-medace-500' 
-                    : 'bg-slate-700'
-                }`} />
-             ))}
-          </div>
-        </div>
+              <div className="grid grid-cols-2 gap-3 min-w-[280px]">
+                <div className={`rounded-3xl border px-5 py-5 ${LEVEL_BADGE_STYLE[finalLevel]}`}>
+                  <div className="text-xs font-bold tracking-[0.18em] uppercase">Estimated Level</div>
+                  <div className="mt-3 text-4xl font-black tracking-tight">{finalLevel}</div>
+                  <div className="mt-2 text-sm font-medium">{result.summaryTitle}</div>
+                </div>
+                <div className="rounded-3xl border border-medace-100 bg-medace-50/75 px-5 py-5">
+                  <div className="text-xs font-bold tracking-[0.18em] uppercase text-slate-400">Confidence</div>
+                  <div className="mt-3 text-2xl font-black text-slate-900">{result.confidence === 'HIGH' ? '高め' : '標準'}</div>
+                  <div className="mt-2 text-sm text-slate-600">{result.correctCount} / {result.totalQuestions} 問正解</div>
+                  <div className="text-sm text-slate-500">Weighted score {result.weightedScore}</div>
+                </div>
+              </div>
+            </div>
 
-        <div className="p-8 overflow-y-auto flex-grow">
-          {step === 'GRADE' && (
-            <div className="animate-in fade-in slide-in-from-bottom-4">
-              <h2 className="text-xl font-bold text-slate-800 mb-6 text-center">現在の学年・立場を選択してください</h2>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {GRADES.map((g) => (
-                  <button
-                    key={g.id}
-                    onClick={() => handleGradeSelect(g.id as UserGrade)}
-                    className="p-4 border border-slate-200 rounded-xl hover:border-medace-500 hover:bg-medace-50 transition-all text-left group"
-                  >
-                    <div className="font-bold text-slate-800 group-hover:text-medace-700">{g.label}</div>
-                    <div className="text-xs text-slate-400 group-hover:text-medace-500">{g.desc}</div>
-                  </button>
+            <div className="mt-6 rounded-3xl border border-medace-100 bg-[#fff8ef] px-5 py-4 text-sm leading-relaxed text-medace-900/75">
+              {result.alignmentNote}
+            </div>
+          </div>
+
+          <div className="grid lg:grid-cols-[1.15fr_0.85fr] gap-6">
+            <div className="rounded-[32px] border border-slate-200 bg-white p-6 md:p-8 shadow-xl">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-5 h-5 text-medace-600" />
+                <h3 className="text-xl font-black tracking-tight text-slate-950">診断の内訳</h3>
+              </div>
+
+              <div className="mt-6 grid md:grid-cols-3 gap-4">
+                {(Object.entries(result.phaseScores) as Array<[keyof typeof result.phaseScores, { correct: number; total: number }]>).map(([phase, score]) => (
+                  <div key={phase} className="rounded-3xl border border-medace-100 bg-[#fff8ef] px-5 py-5">
+                    <div className="text-xs font-bold tracking-[0.18em] uppercase text-slate-400">{DIAGNOSTIC_PHASE_LABELS[phase]}</div>
+                    <div className="mt-3 text-3xl font-black text-slate-900">{score.correct}<span className="text-lg text-slate-400">/{score.total}</span></div>
+                    <div className="mt-2 text-sm text-slate-600">
+                      {phase === 'warmup' ? '基礎の安定度' : phase === 'core' ? '標準的な文脈力' : '上位帯の伸びしろ'}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="mt-8 grid gap-4">
+                {result.skillSummaries.map((summary) => (
+                  <div key={summary.skill} className="rounded-3xl border border-slate-200 px-5 py-5">
+                    <div className="flex items-center justify-between gap-4">
+                      <div>
+                        <div className="text-lg font-bold text-slate-900">{summary.label}</div>
+                        <p className="mt-1 text-sm text-slate-600">{summary.message}</p>
+                      </div>
+                      <div className={`rounded-full border px-3 py-1 text-xs font-bold ${
+                        summary.status === 'strong'
+                          ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                          : summary.status === 'steady'
+                            ? 'border-sky-200 bg-sky-50 text-sky-700'
+                            : 'border-amber-200 bg-amber-50 text-amber-700'
+                      }`}>
+                        {summary.status === 'strong' ? '安定' : summary.status === 'steady' ? '育成中' : '優先'}
+                      </div>
+                    </div>
+                    <div className="mt-4">
+                      <div className="flex justify-between text-xs font-bold text-slate-400 mb-1">
+                        <span>{summary.correct} / {summary.total}</span>
+                        <span>{Math.round(summary.ratio * 100)}%</span>
+                      </div>
+                      <div className="h-2.5 rounded-full bg-slate-100 overflow-hidden">
+                        <div
+                          className={`h-full rounded-full ${
+                            summary.status === 'strong'
+                              ? 'bg-emerald-500'
+                              : summary.status === 'steady'
+                                ? 'bg-sky-500'
+                                : 'bg-amber-500'
+                          }`}
+                          style={{ width: `${Math.max(8, Math.round(summary.ratio * 100))}%` }}
+                        ></div>
+                      </div>
+                    </div>
+                  </div>
                 ))}
               </div>
             </div>
-          )}
 
-          {step === 'QUIZ_PREP' && (
-            <div className="text-center animate-in zoom-in duration-300 py-4">
-              <div className="w-20 h-20 bg-medace-100 rounded-full flex items-center justify-center mx-auto mb-6">
-                <BrainCircuit className="w-10 h-10 text-medace-600" />
-              </div>
-              <h2 className="text-2xl font-bold text-slate-800 mb-4">
-                  {isRetake ? "実力診断テスト (アドバンス)" : "レベル診断テスト"}
-              </h2>
-              <p className="text-slate-500 mb-8 max-w-md mx-auto text-sm leading-relaxed">
-                {isRetake 
-                    ? "AI (Gemini 3.0 Pro) があなたの学習履歴と回答内容を深く分析し、より正確なCEFRレベルを判定します。記述問題も含まれます。(所要時間: 約10分)"
-                    : "AIがあなたの実力を測定するための短いクイズを作成します。直感で答えてください。(所要時間: 約1分)"}
-              </p>
-              <button 
-                onClick={startQuiz}
-                className="px-8 py-4 bg-medace-600 text-white rounded-full font-bold text-lg shadow-lg hover:scale-105 transition-transform flex items-center gap-2 mx-auto"
-              >
-                診断を開始する <ChevronRight className="w-5 h-5" />
-              </button>
-            </div>
-          )}
-
-          {step === 'QUIZ' && questions.length > 0 && (
-            <div className="animate-in slide-in-from-right duration-300">
-              <div className="flex justify-between text-xs font-bold text-slate-400 uppercase mb-2">
-                <span>第 {currentQIndex + 1} 問 / 全 {questions.length} 問</span>
-                <span className="bg-slate-100 px-2 py-0.5 rounded text-slate-500">{questions[currentQIndex].type}</span>
-              </div>
-              
-              <div className="bg-slate-100 p-6 rounded-2xl mb-6 border-l-4 border-medace-500">
-                <h3 className="text-lg md:text-xl font-bold text-slate-800 whitespace-pre-wrap leading-relaxed">{questions[currentQIndex].question}</h3>
+            <div className="space-y-6">
+              <div className="rounded-[32px] border border-slate-200 bg-white p-6 md:p-8 shadow-xl">
+                <p className="text-xs font-bold tracking-[0.18em] uppercase text-slate-400">Next Focus</p>
+                <h3 className="mt-2 text-xl font-black tracking-tight text-slate-950">このスタート帯で意識すること</h3>
+                <div className="mt-5 space-y-3">
+                  {result.nextFocus.map((focus) => (
+                    <div key={focus} className="rounded-2xl border border-medace-100 bg-[#fff8ef] px-4 py-4 text-sm leading-relaxed text-slate-700">
+                      {focus}
+                    </div>
+                  ))}
+                </div>
               </div>
 
-              {/* Render Input based on Type */}
-              {questions[currentQIndex].type === 'MCQ' && questions[currentQIndex].options ? (
-                  <div className="grid grid-cols-1 gap-3">
-                    {questions[currentQIndex].options!.map((opt, idx) => (
-                      <button
-                        key={idx}
-                        onClick={() => handleAnswer(opt)}
-                        className="p-4 bg-white border-2 border-slate-100 rounded-xl font-bold text-slate-700 hover:border-medace-400 hover:bg-medace-50 transition-all text-left flex items-center gap-3 group"
-                      >
-                        <div className="w-6 h-6 rounded-full border-2 border-slate-200 group-hover:border-medace-500 flex-shrink-0"></div>
-                        {opt}
-                      </button>
-                    ))}
-                  </div>
-              ) : (
-                  <div className="space-y-4">
-                      <div className="relative">
-                        <textarea 
-                            value={textInput}
-                            onChange={(e) => setTextInput(e.target.value)}
-                            placeholder={questions[currentQIndex].type === 'WRITING' ? "ここに英語で回答を入力してください..." : "空欄に入る言葉を入力..."}
-                            className="w-full h-32 p-4 border-2 border-slate-200 rounded-xl focus:border-medace-500 focus:ring-0 outline-none text-lg"
-                        />
-                        <PenTool className="absolute right-4 bottom-4 text-slate-300 w-5 h-5" />
+              <div className="rounded-[32px] border border-slate-200 bg-white p-6 md:p-8 shadow-xl">
+                <p className="text-xs font-bold tracking-[0.18em] uppercase text-slate-400">Review</p>
+                <h3 className="mt-2 text-xl font-black tracking-tight text-slate-950">見直すと効く問題</h3>
+                <div className="mt-5 space-y-3">
+                  {result.reviewItems.filter((item) => !item.isCorrect).slice(0, 3).map((item) => (
+                    <div key={item.id} className="rounded-3xl border border-medace-100 bg-[#fff8ef] px-4 py-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="text-sm font-bold text-slate-900">{item.skill === 'grammar' ? '文法' : item.skill === 'vocabulary' ? '語彙' : '読解'}</div>
+                        <div className={`rounded-full border px-2.5 py-1 text-xs font-bold ${LEVEL_BADGE_STYLE[item.level]}`}>{item.level}</div>
                       </div>
-                      <button 
-                        onClick={() => handleAnswer(textInput)}
-                        disabled={!textInput.trim()}
-                        className="w-full py-3 bg-slate-800 text-white rounded-xl font-bold disabled:opacity-50 hover:bg-slate-700 transition-colors flex items-center justify-center gap-2"
-                      >
-                        回答する <Check className="w-4 h-4" />
-                      </button>
-                  </div>
-              )}
+                      <p className="mt-3 text-sm leading-relaxed text-slate-700">{item.question}</p>
+                      <div className="mt-3 text-xs text-slate-500">正解: {item.correctAnswer}</div>
+                      <div className="mt-2 text-sm text-slate-600">{item.explanation}</div>
+                    </div>
+                  ))}
+                  {result.missedCount === 0 && (
+                    <div className="rounded-3xl border border-emerald-200 bg-emerald-50 px-4 py-4 text-sm font-medium text-emerald-700">
+                      取りこぼしはありませんでした。今の帯で十分にスタートできます。
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="rounded-[32px] border border-medace-700 bg-[linear-gradient(135deg,#66321A_0%,#F66D0B_100%)] p-6 text-white shadow-xl md:p-8">
+                <p className="text-xs font-bold tracking-[0.18em] uppercase text-white/55">おすすめペース</p>
+                <div className="mt-3 text-4xl font-black tracking-tight">{result.recommendedDailyGoal}<span className="text-lg text-white/60 ml-1">語 / 日</span></div>
+                <p className="mt-3 text-sm text-white/75 leading-relaxed">
+                  最初の 2 週間は、このペースで復習を崩さず回せるかを優先してください。詰め込みより、翌日も再現できることが重要です。
+                </p>
+
+                <button
+                  type="button"
+                  onClick={saveResult}
+                  disabled={isSaving}
+                  className="mt-6 w-full rounded-2xl bg-white text-slate-950 py-3.5 font-bold hover:bg-medace-50 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {isSaving ? '保存中...' : 'このレベルで学習を始める'}
+                  {!isSaving && <ChevronRight className="w-5 h-5" />}
+                </button>
+
+                <p className="mt-3 text-xs text-white/55">
+                  これは公式 CEFR 認定ではなく、MedAce 内での開始レベル推定です。
+                </p>
+              </div>
             </div>
-          )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(246,109,11,0.15),_transparent_28%),linear-gradient(180deg,#fff 0%,#fff6ea 100%)] px-4 py-8">
+      <div className="max-w-5xl mx-auto">
+        <div className="overflow-hidden rounded-[32px] border border-medace-100 bg-white shadow-xl">
+          <div className="grid lg:grid-cols-[0.33fr_0.67fr]">
+            <aside className="bg-[linear-gradient(160deg,#2F1609_0%,#66321A_45%,#F66D0B_100%)] p-6 text-white md:p-8">
+              <p className="text-xs font-bold tracking-[0.18em] uppercase text-white/55">診断の流れ</p>
+              <h2 className="mt-3 text-2xl font-black tracking-tight">英語の現在地を確認中</h2>
+              <p className="mt-3 text-sm text-white/72 leading-relaxed">
+                各問題は文法・語彙・読解のいずれかに対応しています。正答率だけでなく、どの帯で取れているかも見ています。
+              </p>
+
+              <div className="mt-6 space-y-3">
+                {[
+                  { label: '学年', value: GRADE_LABELS[selectedGrade] },
+                  { label: '問題数', value: `${currentQuestionIndex + 1} / ${DIAGNOSTIC_QUESTIONS.length}` },
+                  { label: '回答済み', value: `${answeredCount} 問` },
+                ].map((item) => (
+                  <div key={item.label} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                    <div className="text-xs font-bold tracking-[0.18em] uppercase text-white/55">{item.label}</div>
+                    <div className="mt-2 text-lg font-bold text-white">{item.value}</div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="mt-6">
+                <div className="flex justify-between text-[11px] font-bold tracking-[0.18em] uppercase text-white/55 mb-2">
+                  <span>全体の進み具合</span>
+                  <span>{progressPercent}%</span>
+                </div>
+                <div className="h-2.5 rounded-full bg-white/10 overflow-hidden">
+                  <div className="h-full rounded-full bg-gradient-to-r from-medace-300 to-medace-500 transition-all duration-300" style={{ width: `${progressPercent}%` }}></div>
+                </div>
+              </div>
+
+              <div className="mt-8 rounded-3xl border border-white/10 bg-white/5 p-5">
+                <div className="text-xs font-bold tracking-[0.18em] uppercase text-white/55">現在の判定帯</div>
+                <div className="mt-3 inline-flex items-center rounded-full border border-white/10 bg-white/10 px-3 py-1 text-xs font-bold text-white/90">
+                  {DIAGNOSTIC_PHASE_LABELS[currentQuestion.phase]} · {currentQuestion.level}
+                </div>
+                <p className="mt-3 text-sm text-white/70 leading-relaxed">
+                  {currentQuestion.phase === 'warmup'
+                    ? 'まずは基礎の安定度を見ています。'
+                    : currentQuestion.phase === 'core'
+                      ? 'ここから標準的な読解・文脈判断を見ます。'
+                      : '上位帯でどこまで届くかを確認しています。'}
+                </p>
+              </div>
+            </aside>
+
+            <section className="p-6 md:p-8 lg:p-10">
+              <div className="flex items-center justify-between gap-4 flex-wrap">
+                <div>
+                  <div className="inline-flex items-center gap-2 rounded-full bg-medace-50 border border-medace-100 px-3 py-1 text-xs font-bold text-medace-700">
+                    {currentQuestion.skill === 'grammar' ? 'Grammar' : currentQuestion.skill === 'vocabulary' ? 'Vocabulary' : 'Reading'}
+                  </div>
+                  <h3 className="mt-4 text-2xl md:text-3xl font-black tracking-tight text-slate-950 leading-tight">
+                    第 {currentQuestionIndex + 1} 問
+                  </h3>
+                </div>
+                <div className={`rounded-full border px-3 py-1 text-xs font-bold ${LEVEL_BADGE_STYLE[currentQuestion.level]}`}>
+                  {currentQuestion.level}
+                </div>
+              </div>
+
+              <div className="mt-8 rounded-[28px] border border-medace-100 bg-[#fff8ef] p-5 md:p-6">
+                {currentQuestion.prompt && (
+                  <div className="rounded-2xl bg-white border border-slate-200 px-4 py-4 text-sm leading-relaxed text-slate-600 whitespace-pre-wrap">
+                    {currentQuestion.prompt}
+                  </div>
+                )}
+                <h4 className="mt-4 text-xl md:text-2xl font-bold leading-relaxed text-slate-950 whitespace-pre-wrap">
+                  {currentQuestion.question}
+                </h4>
+              </div>
+
+              <div className="mt-6 grid gap-3">
+                {currentQuestion.options.map((option, index) => {
+                  const isSelected = currentAnswer === option;
+                  return (
+                    <button
+                      key={option}
+                      type="button"
+                      onClick={() => handleSelectAnswer(option)}
+                      className={`rounded-3xl border px-5 py-4 text-left transition-all ${isSelected ? 'border-medace-900 bg-[linear-gradient(135deg,#66321A_0%,#F66D0B_100%)] text-white shadow-[0_18px_40px_rgba(228,94,4,0.18)]' : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'}`}
+                    >
+                      <div className="flex items-start gap-4">
+                        <div className={`w-8 h-8 rounded-full border flex items-center justify-center text-sm font-black shrink-0 ${isSelected ? 'border-white/20 bg-white/10 text-white' : 'border-slate-200 bg-slate-50 text-slate-500'}`}>
+                          {String.fromCharCode(65 + index)}
+                        </div>
+                        <div className={`text-sm md:text-base leading-relaxed font-medium ${isSelected ? 'text-white' : 'text-slate-800'}`}>
+                          {option}
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="mt-8 flex items-center justify-between gap-3">
+                <button
+                  type="button"
+                  onClick={handleBack}
+                  className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold text-slate-600 transition-colors hover:bg-medace-50"
+                >
+                  <ChevronLeft className="w-4 h-4" /> 戻る
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleNext}
+                  disabled={!currentAnswer}
+                  className="inline-flex items-center gap-2 rounded-2xl bg-[linear-gradient(135deg,#66321A_0%,#F66D0B_100%)] px-5 py-3 text-sm font-bold text-white transition-transform hover:scale-[1.01] disabled:opacity-50 disabled:hover:scale-100"
+                >
+                  {currentQuestionIndex === DIAGNOSTIC_QUESTIONS.length - 1 ? '判定を見る' : '次へ'}
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+            </section>
+          </div>
         </div>
       </div>
     </div>

@@ -6,10 +6,13 @@ import StudyMode from './components/StudyMode';
 import QuizMode from './components/QuizMode';
 import AdminPanel from './components/AdminPanel';
 import InstructorDashboard from './components/InstructorDashboard';
+import BusinessAdminDashboard from './components/BusinessAdminDashboard';
 import Onboarding from './components/Onboarding';
-import { UserRole, UserProfile } from './types';
+import { OrganizationRole, UserRole, UserProfile } from './types';
 import { storage } from './services/storage';
-import { Loader2, Lock, Mail, LogIn, UserPlus } from 'lucide-react';
+import { AUTH_COPY, BRAND } from './config/brand';
+import { getHomeViewForUser, isGroupAdmin } from './config/access';
+import { ArrowRight, CheckCircle2, ChevronDown, ChevronUp, Loader2, Lock, LogIn, Mail, User, UserPlus } from 'lucide-react';
 
 const App: React.FC = () => {
   const [user, setUser] = useState<UserProfile | null>(null);
@@ -18,9 +21,13 @@ const App: React.FC = () => {
   const [authLoading, setAuthLoading] = useState(true);
   
   // Login Form State
+  const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [authMode, setAuthMode] = useState<'LOGIN' | 'SIGNUP'>('LOGIN');
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [showAlternateAccess, setShowAlternateAccess] = useState(false);
 
   // --- Restore Session (Async) ---
   useEffect(() => {
@@ -29,10 +36,7 @@ const App: React.FC = () => {
         const sessionUser = await storage.getSession();
         if (sessionUser) {
           setUser(sessionUser);
-          // Route based on role
-          if (sessionUser.role === UserRole.ADMIN) setCurrentView('admin');
-          else if (sessionUser.role === UserRole.INSTRUCTOR) setCurrentView('instructor');
-          else setCurrentView('dashboard');
+          setCurrentView(getHomeViewForUser(sessionUser));
         }
       } catch (e) {
         console.error("Session restore failed", e);
@@ -43,31 +47,27 @@ const App: React.FC = () => {
     initSession();
   }, []);
 
-  const handleDemoLogin = async (role: UserRole) => {
-    // Prompt removed for frictionless demo access
-    // Only prompt for Admin to prevent accidental access
+  const handleDemoLogin = async (role: UserRole, organizationRole?: OrganizationRole) => {
+    let demoPassword: string | undefined;
     if (role === UserRole.ADMIN) {
-         const passwordInput = window.prompt("管理用パスワード (admin):");
-         if (passwordInput !== 'admin') {
-             alert("パスワードが間違っています。");
-             return;
-         }
+      const passwordInput = window.prompt("管理用パスワード:");
+      if (!passwordInput) return;
+      demoPassword = passwordInput;
     }
 
+    setAuthError(null);
     setAuthLoading(true);
     try {
-      const loggedInUser = await storage.login(role);
+      const loggedInUser = await storage.login(role, demoPassword, organizationRole);
       if (loggedInUser) {
         setUser(loggedInUser);
-        if (role === UserRole.ADMIN) setCurrentView('admin');
-        else if (role === UserRole.INSTRUCTOR) setCurrentView('instructor');
-        else setCurrentView('dashboard');
+        setCurrentView(getHomeViewForUser(loggedInUser));
       } else {
-        alert("ログインに失敗しました。");
+        setAuthError("ログインに失敗しました。");
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error("Login failed", e);
-      alert("ログインエラーが発生しました。");
+      setAuthError(e?.message || "ログインエラーが発生しました。");
     } finally {
       setAuthLoading(false);
     }
@@ -75,20 +75,52 @@ const App: React.FC = () => {
 
   const handleEmailAuth = async (e: React.FormEvent) => {
       e.preventDefault();
-      if(!email || !password) return;
+      setAuthError(null);
+      if(!email || !password) {
+          setAuthError("メールアドレスとパスワードを入力してください。");
+          return;
+      }
+
+      if (authMode === 'SIGNUP') {
+          if (!displayName.trim()) {
+              setAuthError("表示名を入力してください。");
+              return;
+          }
+          if (password.length < 6) {
+              setAuthError("パスワードは6文字以上にしてください。");
+              return;
+          }
+          if (password !== confirmPassword) {
+              setAuthError("確認用パスワードが一致していません。");
+              return;
+          }
+      }
       
       setAuthLoading(true);
       try {
-          const loggedInUser = await storage.authenticate(email, password, authMode === 'SIGNUP');
+          const loggedInUser = await storage.authenticate(
+            email,
+            password,
+            authMode === 'SIGNUP',
+            undefined,
+            authMode === 'SIGNUP' ? displayName.trim() : undefined
+          );
           if (loggedInUser) {
               setUser(loggedInUser);
-              setCurrentView('dashboard');
+              setCurrentView(getHomeViewForUser(loggedInUser));
           }
       } catch (err: any) {
-          alert(err.message || "認証エラーが発生しました。");
+          setAuthError(err.message || "認証エラーが発生しました。");
       } finally {
           setAuthLoading(false);
       }
+  };
+
+  const switchAuthMode = (mode: 'LOGIN' | 'SIGNUP') => {
+    setAuthMode(mode);
+    setAuthError(null);
+    setPassword('');
+    setConfirmPassword('');
   };
 
   const handleLogout = async () => {
@@ -96,8 +128,12 @@ const App: React.FC = () => {
     await storage.clearSession();
     setCurrentView('login');
     setSelectedBookId(null);
+    setDisplayName('');
     setEmail('');
     setPassword('');
+    setConfirmPassword('');
+    setAuthError(null);
+    setShowAlternateAccess(false);
   };
 
   const handleBookSelect = (bookId: string, mode: 'study' | 'quiz') => {
@@ -123,99 +159,204 @@ const App: React.FC = () => {
 
     if (!user) {
       return (
-        <div className="max-w-md mx-auto mt-10 bg-white rounded-2xl shadow-xl border border-slate-100 overflow-hidden">
-          <div className="bg-slate-50 p-6 text-center border-b border-slate-100">
-            <div className="w-16 h-16 bg-medace-500 rounded-xl mx-auto flex items-center justify-center mb-4 shadow-lg shadow-medace-200">
-              <span className="text-white text-2xl font-bold">M</span>
-            </div>
-            <h1 className="text-2xl font-bold text-slate-800">MedAce Pro</h1>
-            <p className="text-slate-500 text-sm mt-1">Secure Learning Environment</p>
-          </div>
-
-          <div className="p-8 space-y-8">
-            {/* Manual Auth Form */}
-            <form onSubmit={handleEmailAuth} className="space-y-4">
+        <div className="max-w-5xl mx-auto mt-6 lg:mt-10 overflow-hidden rounded-[32px] border border-medace-100 bg-white shadow-[0_28px_90px_rgba(246,109,11,0.12)]">
+          <div className="grid lg:grid-cols-[1.04fr_0.96fr]">
+            <div className="relative overflow-hidden bg-[linear-gradient(145deg,#66321A_0%,#F66D0B_58%,#FFBF52_100%)] p-8 md:p-10 text-white">
+              <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,_rgba(255,255,255,0.3),_transparent_34%),radial-gradient(circle_at_bottom_left,_rgba(255,255,255,0.18),_transparent_28%)]"></div>
+              <div className="relative space-y-8">
                 <div>
-                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Email Address</label>
-                    <div className="relative">
-                        <Mail className="absolute left-3 top-3 w-5 h-5 text-slate-400" />
-                        <input 
-                            type="email" 
-                            value={email}
-                            onChange={(e) => setEmail(e.target.value)}
-                            className="w-full pl-10 pr-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-medace-500 focus:border-medace-500 outline-none transition-all"
-                            placeholder="your@email.com"
-                        />
-                    </div>
+                  <div className="w-16 h-16 rounded-2xl bg-white/15 border border-white/20 backdrop-blur-sm flex items-center justify-center mb-5 shadow-lg">
+                    <span className="text-white text-2xl font-black">{BRAND.mark}</span>
+                  </div>
+                  <p className="text-white/82 text-sm font-bold tracking-[0.18em] uppercase">{AUTH_COPY.eyebrow}</p>
+                  <h1 className="mt-3 text-3xl md:text-4xl font-black leading-tight">
+                    {AUTH_COPY.title[0]}
+                    <br />
+                    {AUTH_COPY.title[1]}
+                    <br />
+                    {AUTH_COPY.title[2]}
+                  </h1>
+                  <p className="mt-4 text-white/85 text-sm md:text-base leading-relaxed max-w-md">
+                    {AUTH_COPY.body}
+                  </p>
                 </div>
+
+                <div className="grid gap-3">
+                  {(authMode === 'SIGNUP' ? AUTH_COPY.signupSteps : AUTH_COPY.loginSteps).map((step) => (
+                    <div key={step} className="flex items-center gap-3 rounded-2xl bg-white/10 border border-white/15 px-4 py-3 backdrop-blur-sm">
+                      <CheckCircle2 className="w-5 h-5 text-white shrink-0" />
+                      <span className="text-sm font-medium">{step}</span>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="rounded-2xl border border-white/15 bg-medace-900/15 p-5">
+                  <p className="text-xs font-bold tracking-[0.18em] uppercase text-white/70">{AUTH_COPY.demoEyebrow}</p>
+                  <p className="mt-2 text-sm text-white/85">まずは生徒として入れる入口を前に出し、先生・管理者向けの体験はあとから開ける形にしています。</p>
+                  <button
+                    onClick={() => handleDemoLogin(UserRole.STUDENT)}
+                    className="mt-4 w-full rounded-2xl bg-white py-3.5 text-sm font-bold text-medace-700 shadow-sm transition-colors hover:bg-orange-50"
+                  >
+                    生徒としてすぐ試す
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowAlternateAccess((prev) => !prev)}
+                    className="mt-3 flex w-full items-center justify-between rounded-xl border border-white/20 bg-white/5 px-4 py-3 text-sm font-bold text-white/88 transition-colors hover:bg-white/10"
+                  >
+                    <span>学校・先生向けの体験メニュー</span>
+                    {showAlternateAccess ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                  </button>
+                  {showAlternateAccess && (
+                    <div className="mt-3 grid gap-3 rounded-2xl border border-white/10 bg-white/5 p-3">
+                      <button
+                        onClick={() => handleDemoLogin(UserRole.STUDENT, OrganizationRole.STUDENT)}
+                        className="rounded-xl border border-white/20 bg-white/10 py-3 text-sm font-bold text-white transition-colors hover:bg-white/15"
+                      >
+                        学校・塾の生徒
+                      </button>
+                      <div className="grid grid-cols-2 gap-3">
+                        <button
+                          onClick={() => handleDemoLogin(UserRole.INSTRUCTOR, OrganizationRole.INSTRUCTOR)}
+                          className="rounded-xl border border-white/20 bg-white/10 py-3 text-sm font-bold text-white transition-colors hover:bg-white/15"
+                        >
+                          先生
+                        </button>
+                        <button
+                          onClick={() => handleDemoLogin(UserRole.INSTRUCTOR, OrganizationRole.GROUP_ADMIN)}
+                          className="rounded-xl border border-white/20 bg-white/10 py-3 text-sm font-bold text-white transition-colors hover:bg-white/15"
+                        >
+                          学校管理者
+                        </button>
+                      </div>
+                      <button
+                        onClick={() => handleDemoLogin(UserRole.ADMIN)}
+                        className="rounded-xl border border-white/20 bg-white/10 py-3 text-xs font-bold text-white/90 transition-colors hover:bg-white/15"
+                      >
+                        サービス管理者
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-[linear-gradient(180deg,#fffdf9_0%,#ffffff_100%)] p-6 md:p-8 lg:p-10">
+              <div className="mb-6 grid grid-cols-2 gap-1 rounded-2xl border border-medace-100 bg-medace-50 p-1.5">
+                <button
+                  type="button"
+                  onClick={() => switchAuthMode('LOGIN')}
+                  className={`rounded-xl px-4 py-3 text-sm font-bold transition-all ${authMode === 'LOGIN' ? 'bg-white text-medace-900 shadow-sm' : 'text-medace-700/70 hover:text-medace-900'}`}
+                >
+                  ログイン
+                </button>
+                <button
+                  type="button"
+                  onClick={() => switchAuthMode('SIGNUP')}
+                  className={`rounded-xl px-4 py-3 text-sm font-bold transition-all ${authMode === 'SIGNUP' ? 'bg-white text-medace-700 shadow-sm' : 'text-medace-700/70 hover:text-medace-900'}`}
+                >
+                  新規登録
+                </button>
+              </div>
+
+              <div className="mb-6">
+                <h2 className="text-2xl font-bold text-slate-900">
+                  {authMode === 'LOGIN' ? AUTH_COPY.loginHeading : AUTH_COPY.signupHeading}
+                </h2>
+                <p className="mt-2 text-sm text-slate-500 leading-relaxed">
+                  {authMode === 'LOGIN' ? AUTH_COPY.loginBody : AUTH_COPY.signupBody}
+                </p>
+              </div>
+
+              <form onSubmit={handleEmailAuth} className="space-y-4">
+                {authMode === 'SIGNUP' && (
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5">表示名</label>
+                    <div className="relative">
+                      <User className="absolute left-3 top-3 w-5 h-5 text-slate-400" />
+                      <input
+                        type="text"
+                        value={displayName}
+                        onChange={(e) => setDisplayName(e.target.value)}
+                        className="w-full pl-10 pr-4 py-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-medace-500 focus:border-medace-500 outline-none transition-all"
+                        placeholder="例: 田中 はるか"
+                      />
+                    </div>
+                  </div>
+                )}
+
                 <div>
-                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Password</label>
+                  <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5">メールアドレス</label>
+                  <div className="relative">
+                    <Mail className="absolute left-3 top-3 w-5 h-5 text-slate-400" />
+                    <input 
+                      type="email"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      className="w-full pl-10 pr-4 py-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-medace-500 focus:border-medace-500 outline-none transition-all"
+                      placeholder="name@example.com"
+                      autoComplete="email"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="block text-xs font-bold text-slate-500 uppercase">パスワード</label>
+                    {authMode === 'SIGNUP' && <span className="text-[11px] font-bold text-slate-400">6文字以上</span>}
+                  </div>
+                  <div className="relative">
+                    <Lock className="absolute left-3 top-3 w-5 h-5 text-slate-400" />
+                    <input 
+                      type="password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      className="w-full pl-10 pr-4 py-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-medace-500 focus:border-medace-500 outline-none transition-all"
+                      placeholder={authMode === 'SIGNUP' ? '6文字以上で設定' : 'パスワードを入力'}
+                      autoComplete={authMode === 'LOGIN' ? 'current-password' : 'new-password'}
+                    />
+                  </div>
+                </div>
+
+                {authMode === 'SIGNUP' && (
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5">パスワード確認</label>
                     <div className="relative">
-                        <Lock className="absolute left-3 top-3 w-5 h-5 text-slate-400" />
-                        <input 
-                            type="password" 
-                            value={password}
-                            onChange={(e) => setPassword(e.target.value)}
-                            className="w-full pl-10 pr-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-medace-500 focus:border-medace-500 outline-none transition-all"
-                            placeholder="••••••••"
-                        />
+                      <Lock className="absolute left-3 top-3 w-5 h-5 text-slate-400" />
+                      <input
+                        type="password"
+                        value={confirmPassword}
+                        onChange={(e) => setConfirmPassword(e.target.value)}
+                        className="w-full pl-10 pr-4 py-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-medace-500 focus:border-medace-500 outline-none transition-all"
+                        placeholder="確認用にもう一度入力"
+                        autoComplete="new-password"
+                      />
                     </div>
+                  </div>
+                )}
+
+                {authError && (
+                  <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
+                    {authError}
+                  </div>
+                )}
+
+                <button 
+                  type="submit"
+                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-[linear-gradient(135deg,#66321A_0%,#F66D0B_100%)] py-3.5 font-bold text-white shadow-md transition-transform hover:scale-[1.01]"
+                >
+                  {authMode === 'LOGIN' ? (
+                    <><LogIn className="w-4 h-4" /> ログイン</>
+                  ) : (
+                    <><UserPlus className="w-4 h-4" /> 登録してはじめる <ArrowRight className="w-4 h-4" /></>
+                  )}
+                </button>
+
+                <div className="rounded-2xl border border-medace-100 bg-medace-50/70 px-4 py-3 text-sm text-medace-900/80">
+                  {authMode === 'LOGIN' ? AUTH_COPY.helperLogin : AUTH_COPY.helperSignup}
                 </div>
-                
-                {/* Inline Auth Error (if any managed by state in future, currently alert) */}
-
-                <button 
-                    type="submit"
-                    className="w-full py-3 bg-medace-600 text-white rounded-lg font-bold hover:bg-medace-700 transition-colors shadow-md flex items-center justify-center gap-2"
-                >
-                    {authMode === 'LOGIN' ? (
-                        <><LogIn className="w-4 h-4" /> ログイン</>
-                    ) : (
-                        <><UserPlus className="w-4 h-4" /> 新規登録</>
-                    )}
-                </button>
-
-                <div className="text-center text-xs">
-                    <span className="text-slate-400">
-                        {authMode === 'LOGIN' ? "アカウントをお持ちでないですか？" : "すでにアカウントをお持ちですか？"}
-                    </span>
-                    <button 
-                        type="button"
-                        onClick={() => setAuthMode(authMode === 'LOGIN' ? 'SIGNUP' : 'LOGIN')}
-                        className="text-medace-600 font-bold ml-2 hover:underline"
-                    >
-                        {authMode === 'LOGIN' ? "新規登録はこちら" : "ログインはこちら"}
-                    </button>
-                </div>
-            </form>
-
-            <div className="relative flex py-1 items-center">
-                <div className="flex-grow border-t border-slate-200"></div>
-                <span className="flex-shrink-0 mx-4 text-slate-400 text-xs font-bold uppercase">ワンクリックで体験 (Demo)</span>
-                <div className="flex-grow border-t border-slate-200"></div>
+              </form>
             </div>
-
-            {/* Demo Buttons */}
-            <div className="grid grid-cols-2 gap-3">
-                <button 
-                onClick={() => handleDemoLogin(UserRole.STUDENT)}
-                className="py-2 bg-slate-100 text-slate-600 rounded-lg text-sm font-bold hover:bg-slate-200 transition-colors"
-                >
-                Demo Student
-                </button>
-                <button 
-                onClick={() => handleDemoLogin(UserRole.INSTRUCTOR)}
-                className="py-2 bg-slate-100 text-slate-600 rounded-lg text-sm font-bold hover:bg-slate-200 transition-colors"
-                >
-                Demo Teacher
-                </button>
-            </div>
-             <button 
-                onClick={() => handleDemoLogin(UserRole.ADMIN)}
-                className="w-full py-2 border border-slate-200 text-slate-400 rounded-lg text-xs font-bold hover:text-slate-600 hover:border-slate-300 transition-colors"
-            >
-                Admin Access
-            </button>
           </div>
         </div>
       );
@@ -257,7 +398,9 @@ const App: React.FC = () => {
       case 'admin':
         return user.role === UserRole.ADMIN ? <AdminPanel /> : <div className="p-8 text-center text-red-500">アクセス権限がありません</div>;
       case 'instructor':
-        return user.role === UserRole.INSTRUCTOR ? <InstructorDashboard /> : <div className="p-8 text-center text-red-500">アクセス権限がありません</div>;
+        return user.role === UserRole.INSTRUCTOR
+          ? (isGroupAdmin(user) ? <BusinessAdminDashboard user={user} /> : <InstructorDashboard user={user} />)
+          : <div className="p-8 text-center text-red-500">アクセス権限がありません</div>;
       default:
         return <Dashboard user={user} onSelectBook={handleBookSelect} />;
     }

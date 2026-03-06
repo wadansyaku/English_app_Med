@@ -1,0 +1,18 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "medace-english-app",
+  "pages_build_output_dir": "./dist",
+  "compatibility_date": "2026-03-06",
+  "compatibility_flags": ["nodejs_compat"],
+  "placement": {
+    "mode": "smart"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "medace-db",
+      "database_id": "1b1c8b71-764c-4593-8a20-32a75b77ab11",
+      "migrations_dir": "migrations"
+    }
+  ]
+}

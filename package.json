@@ -6,19 +6,24 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "cf:preview": "vite build && wrangler pages dev dist",
+    "db:migrate:local": "wrangler d1 migrations apply medace-db --local",
+    "db:migrate:remote": "wrangler d1 migrations apply medace-db --remote",
+    "db:seed:sql": "node scripts/build-seed-sql.mjs"
   },
   "dependencies": {
     "react-dom": "^19.2.0",
     "lucide-react": "^0.554.0",
     "react": "^19.2.0",
-    "@google/genai": "^1.30.0",
-    "@supabase/supabase-js": "^2.39.0"
+    "@google/genai": "^1.30.0"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
     "@vitejs/plugin-react": "^5.0.0",
     "typescript": "~5.8.2",
-    "vite": "^6.2.0"
+    "vite": "^6.2.0",
+    "wrangler": "^4.58.0"
   }
 }

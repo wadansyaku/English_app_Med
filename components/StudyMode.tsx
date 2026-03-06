@@ -282,8 +282,8 @@ const StudyMode: React.FC<StudyModeProps> = ({ user, bookId, onBack, onSessionCo
       
       {/* Report Modal */}
       {showReportModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm" onClick={() => setShowReportModal(false)}>
-              <div className="bg-white rounded-2xl p-6 w-full max-w-md" onClick={e => e.stopPropagation()}>
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-medace-900/35 p-4 backdrop-blur-sm" onClick={() => setShowReportModal(false)}>
+              <div className="w-full max-w-md rounded-2xl border border-medace-100 bg-white p-6" onClick={e => e.stopPropagation()}>
                   <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
                       <Flag className="w-5 h-5 text-red-500" /> 問題を報告
                   </h3>
@@ -297,7 +297,7 @@ const StudyMode: React.FC<StudyModeProps> = ({ user, bookId, onBack, onSessionCo
                     placeholder="例: 例文が古文として不自然です / 意味が間違っています"
                   />
                   <div className="flex gap-3">
-                      <button onClick={() => setShowReportModal(false)} className="flex-1 py-2 bg-slate-100 text-slate-600 rounded-lg font-bold">キャンセル</button>
+                      <button onClick={() => setShowReportModal(false)} className="flex-1 rounded-lg bg-medace-50 py-2 font-bold text-medace-800">キャンセル</button>
                       <button onClick={submitReport} disabled={!reportReason.trim()} className="flex-1 py-2 bg-red-500 text-white rounded-lg font-bold disabled:opacity-50">報告する</button>
                   </div>
               </div>
@@ -310,7 +310,7 @@ const StudyMode: React.FC<StudyModeProps> = ({ user, bookId, onBack, onSessionCo
         </button>
         <div className="flex items-center gap-2">
             {bookId === 'smart-session' && <span className="bg-medace-100 text-medace-700 text-xs font-bold px-2 py-1 rounded flex items-center gap-1"><Zap className="w-3 h-3" /> デイリークエスト</span>}
-            <span className="text-slate-400 text-sm font-mono bg-slate-100 px-3 py-1 rounded-full">
+            <span className="rounded-full bg-medace-50 px-3 py-1 font-mono text-sm text-medace-700">
             {currentIndex + 1} / {queue.length}
             </span>
         </div>
@@ -336,7 +336,7 @@ const StudyMode: React.FC<StudyModeProps> = ({ user, bookId, onBack, onSessionCo
           </div>
 
           {/* Back */}
-          <div className="card-back absolute w-full h-full bg-slate-900 rounded-3xl shadow-xl flex flex-col backface-hidden overflow-hidden" style={{ transform: 'rotateY(180deg)' }}>
+          <div className="card-back absolute flex h-full w-full flex-col overflow-hidden rounded-3xl bg-[linear-gradient(145deg,#2F1609_0%,#66321A_45%,#F66D0B_100%)] shadow-xl backface-hidden" style={{ transform: 'rotateY(180deg)' }}>
             <div className="p-4 md:p-8 flex flex-col h-full overflow-y-auto scrollbar-hide relative">
                 
                 <div className="flex justify-between w-full mb-2 md:mb-4 relative z-10">
@@ -344,7 +344,7 @@ const StudyMode: React.FC<StudyModeProps> = ({ user, bookId, onBack, onSessionCo
                     {!isEditing ? (
                         <button 
                             onClick={startEditing}
-                            className={`p-1 transition-colors ${isBookOwner ? 'text-slate-500 hover:text-medace-400' : 'text-slate-500 hover:text-red-400'}`}
+                            className={`p-1 transition-colors ${isBookOwner ? 'text-white/55 hover:text-white' : 'text-white/55 hover:text-red-200'}`}
                             title={isBookOwner ? "定義を編集" : "問題を報告する"}
                         >
                             {isBookOwner ? <Edit2 className="w-4 h-4" /> : <Flag className="w-4 h-4" />}
@@ -360,10 +360,10 @@ const StudyMode: React.FC<StudyModeProps> = ({ user, bookId, onBack, onSessionCo
                 {isEditing ? (
                     <div className="flex flex-col gap-4 mb-6" onClick={(e) => e.stopPropagation()}>
                         <div>
-                            <input type="text" value={editWord} onChange={(e) => setEditWord(e.target.value)} className="w-full bg-slate-800 text-white p-2 rounded border border-slate-600" />
+                            <input type="text" value={editWord} onChange={(e) => setEditWord(e.target.value)} className="w-full rounded border border-white/20 bg-white/10 p-2 text-white" />
                         </div>
                         <div>
-                            <textarea value={editDef} onChange={(e) => setEditDef(e.target.value)} className="w-full bg-slate-800 text-white p-2 rounded border border-slate-600 resize-none h-24" />
+                            <textarea value={editDef} onChange={(e) => setEditDef(e.target.value)} className="h-24 w-full resize-none rounded border border-white/20 bg-white/10 p-2 text-white" />
                         </div>
                     </div>
                 ) : (
@@ -372,7 +372,7 @@ const StudyMode: React.FC<StudyModeProps> = ({ user, bookId, onBack, onSessionCo
 
                 <div className="grid grid-cols-1 gap-3 flex-grow content-start">
                     {/* AI Sentence Section */}
-                    <div className="w-full bg-slate-800/50 border border-slate-700 rounded-xl p-3 md:p-4 flex flex-col relative hover:bg-slate-800 transition-colors" onClick={(e) => e.stopPropagation()}>
+                    <div className="relative flex w-full flex-col rounded-xl border border-white/10 bg-white/10 p-3 transition-colors hover:bg-white/12 md:p-4" onClick={(e) => e.stopPropagation()}>
                         {aiContextLoading ? (
                             <div className="flex flex-col items-center gap-2 text-medace-400 animate-pulse py-4">
                                 <Loader2 className="w-5 h-5 animate-spin" /> <span className="text-xs">AI例文を生成中...</span>
@@ -386,22 +386,22 @@ const StudyMode: React.FC<StudyModeProps> = ({ user, bookId, onBack, onSessionCo
                                     </span>
                                     <button onClick={(e) => speakText(e, aiContext.english)} className="hover:text-white transition-colors"><Volume2 className="w-4 h-4" /></button>
                                 </div>
-                                <p className="text-slate-200 text-base md:text-lg leading-relaxed font-medium mb-3">"{aiContext.english}"</p>
+                                <p className="mb-3 text-base font-medium leading-relaxed text-white/88 md:text-lg">"{aiContext.english}"</p>
                                 
                                 {showTranslation ? (
-                                    <p className="text-slate-400 text-xs md:text-sm animate-in fade-in border-t border-slate-700 pt-2">{aiContext.japanese}</p>
+                                    <p className="animate-in fade-in border-t border-white/10 pt-2 text-xs text-white/70 md:text-sm">{aiContext.japanese}</p>
                                 ) : (
-                                    <button onClick={() => setShowTranslation(true)} className="text-xs text-slate-500 flex items-center justify-center gap-1 hover:text-slate-300 transition-colors mx-auto">
+                                    <button onClick={() => setShowTranslation(true)} className="mx-auto flex items-center justify-center gap-1 text-xs text-white/65 transition-colors hover:text-white">
                                         <Languages className="w-3 h-3" /> 訳を表示
                                     </button>
                                 )}
                             </div>
                         ) : (
-                            <p className="text-slate-500 text-xs text-center">コンテキスト情報なし</p>
+                            <p className="text-center text-xs text-white/60">コンテキスト情報なし</p>
                         )}
                     </div>
 
-                    <div className="w-full bg-slate-800/50 border border-slate-700 rounded-xl flex flex-col items-center justify-center relative hover:bg-slate-800 transition-colors overflow-hidden min-h-[100px] md:min-h-[120px]" onClick={(e) => e.stopPropagation()}>
+                    <div className="relative flex min-h-[100px] w-full flex-col items-center justify-center overflow-hidden rounded-xl border border-white/10 bg-white/10 transition-colors hover:bg-white/12 md:min-h-[120px]" onClick={(e) => e.stopPropagation()}>
                     {aiImageLoading ? (
                         <div className="flex flex-col items-center gap-2 text-blue-400 animate-pulse">
                             <Loader2 className="w-5 h-5 animate-spin" /> <span className="text-xs text-center">AIイメージ生成中...</span>
@@ -411,8 +411,8 @@ const StudyMode: React.FC<StudyModeProps> = ({ user, bookId, onBack, onSessionCo
                              <img src={aiImage} alt="視覚的記憶補助" className="w-full h-full object-contain opacity-90 group-hover:opacity-100 transition-opacity" />
                         </div>
                     ) : (
-                        <button onClick={generateImage} className="flex flex-col items-center gap-2 text-slate-500 hover:text-blue-400 transition-colors group p-4 w-full h-full justify-center">
-                        <div className="p-2 bg-slate-700 rounded-full group-hover:bg-blue-900/50 transition-colors">
+                        <button onClick={generateImage} className="group flex h-full w-full flex-col items-center justify-center gap-2 p-4 text-white/65 transition-colors hover:text-white">
+                        <div className="rounded-full bg-white/10 p-2 transition-colors group-hover:bg-white/18">
                              <Lock className="w-4 h-4 group-hover:hidden" />
                              <ImageIcon className="w-4 h-4 hidden group-hover:block" />
                         </div>
@@ -429,13 +429,13 @@ const StudyMode: React.FC<StudyModeProps> = ({ user, bookId, onBack, onSessionCo
       {isFlipped && !isEditing ? (
         <div className="grid grid-cols-4 gap-2 md:gap-3 animate-in slide-in-from-bottom-4 fade-in duration-300">
             <button onClick={() => handleRating(0)} className="flex flex-col items-center gap-1 p-2 md:p-3 bg-red-50 text-red-600 rounded-xl border border-red-100 hover:bg-red-100 active:scale-95 transition-transform"><span className="text-[10px] md:text-xs font-bold">もう一度</span><AlertCircle className="w-5 h-5 mt-1" /></button>
-            <button onClick={() => handleRating(1)} className="flex flex-col items-center gap-1 p-2 md:p-3 bg-slate-100 text-slate-600 rounded-xl border border-slate-200 hover:bg-slate-200 active:scale-95 transition-transform"><span className="text-[10px] md:text-xs font-bold">難しい</span><HelpCircleIcon /></button>
+            <button onClick={() => handleRating(1)} className="flex flex-col items-center gap-1 rounded-xl border border-amber-100 bg-amber-50 p-2 text-amber-700 transition-transform active:scale-95 hover:bg-amber-100 md:p-3"><span className="text-[10px] font-bold md:text-xs">難しい</span><HelpCircleIcon /></button>
             <button onClick={() => handleRating(2)} className="flex flex-col items-center gap-1 p-2 md:p-3 bg-blue-50 text-blue-600 rounded-xl border border-blue-100 hover:bg-blue-100 active:scale-95 transition-transform"><span className="text-[10px] md:text-xs font-bold">普通</span><Clock className="w-5 h-5 mt-1" /></button>
             <button onClick={() => handleRating(3)} className="flex flex-col items-center gap-1 p-2 md:p-3 bg-green-50 text-green-600 rounded-xl border border-green-100 hover:bg-green-100 active:scale-95 transition-transform"><span className="text-[10px] md:text-xs font-bold">簡単</span><Zap className="w-5 h-5 mt-1" /></button>
         </div>
       ) : (
         <div className="flex justify-center pb-6 md:pb-0">
-             <button onClick={() => { if(!isEditing) setIsFlipped(true); }} disabled={isEditing} className={`flex items-center gap-2 px-8 py-4 rounded-full font-bold shadow-lg hover:scale-105 transition-transform ${isEditing ? 'bg-slate-300 cursor-not-allowed' : 'bg-slate-800 text-white'}`}>
+             <button onClick={() => { if(!isEditing) setIsFlipped(true); }} disabled={isEditing} className={`flex items-center gap-2 rounded-full px-8 py-4 font-bold shadow-lg transition-transform hover:scale-105 ${isEditing ? 'cursor-not-allowed bg-medace-200' : 'bg-[linear-gradient(135deg,#66321A_0%,#F66D0B_100%)] text-white'}`}>
                 <RotateCw className="w-5 h-5" /> 答えを確認
             </button>
         </div>

@@ -1,10 +1,11 @@
 
-import { WordData, BookMetadata, LearningHistory, BookProgress, UserProfile, UserStats, StudentSummary, StudentRiskLevel, UserRole, LearningPlan, LeaderboardEntry, MasteryDistribution, ActivityLog } from '../types';
-import { SupabaseStorageService } from './supabase';
+import { WordData, BookMetadata, LearningHistory, BookProgress, UserProfile, UserStats, StudentSummary, StudentRiskLevel, UserRole, LearningPlan, LeaderboardEntry, MasteryDistribution, ActivityLog, DashboardSnapshot, SubscriptionPlan, AdminDashboardSnapshot, OrganizationDashboardSnapshot, OrganizationRole, StudentWorksheetSnapshot } from '../types';
+import { getSubscriptionPolicy } from '../config/subscription';
+import { CloudflareStorageService } from './cloudflare';
 
 export interface IStorageService {
-  login(role: UserRole): Promise<UserProfile | null>; 
-  authenticate(email: string, password: string, isSignUp: boolean, role?: UserRole): Promise<UserProfile | null>; 
+  login(role: UserRole, demoPassword?: string, organizationRole?: OrganizationRole): Promise<UserProfile | null>; 
+  authenticate(email: string, password: string, isSignUp: boolean, role?: UserRole, displayName?: string): Promise<UserProfile | null>; 
   saveSession(user: UserProfile): Promise<void>;
   updateSessionUser(user: UserProfile): Promise<void>;
   clearSession(): Promise<void>;
@@ -30,6 +31,8 @@ export interface IStorageService {
   getBookProgress(uid: string, bookId: string): Promise<BookProgress>;
   
   getAllStudentsProgress(): Promise<StudentSummary[]>;
+  getStudentWorksheetSnapshot(studentUid: string): Promise<StudentWorksheetSnapshot>;
+  sendInstructorNotification(studentUid: string, message: string, triggerReason: string, usedAi: boolean): Promise<void>;
   resetAllData(): Promise<void>;
 
   // Plan
@@ -37,6 +40,9 @@ export interface IStorageService {
   getLearningPlan(uid: string): Promise<LearningPlan | null>;
 
   // Analytics & Social
+  getDashboardSnapshot(uid: string): Promise<DashboardSnapshot>;
+  getAdminDashboardSnapshot(): Promise<AdminDashboardSnapshot>;
+  getOrganizationDashboardSnapshot(): Promise<OrganizationDashboardSnapshot>;
   getLeaderboard(currentUid: string): Promise<LeaderboardEntry[]>;
   getMasteryDistribution(uid: string): Promise<MasteryDistribution>;
   getActivityLogs(uid: string): Promise<ActivityLog[]>;
@@ -54,10 +60,76 @@ const STORES = {
 
 // Mocks
 const IDB_MOCK_USERS: UserProfile[] = [
-  { uid: 'mock-student-001', displayName: '鈴木 健太', role: UserRole.STUDENT, email: 'kenta@medace.com', stats: { xp: 1250, level: 12, currentStreak: 5, lastLoginDate: '2023-10-27' } },
-  { uid: 'mock-instructor-001', displayName: 'Oak 先生', role: UserRole.INSTRUCTOR, email: 'oak@medace.com' },
-  { uid: 'mock-admin-001', displayName: 'システム管理者', role: UserRole.ADMIN, email: 'admin@medace.com' }
+  {
+    uid: 'mock-student-free-001',
+    displayName: '鈴木 健太',
+    role: UserRole.STUDENT,
+    email: 'kenta@medace.com',
+    subscriptionPlan: SubscriptionPlan.TOC_FREE,
+    stats: { xp: 1250, level: 12, currentStreak: 5, lastLoginDate: '2023-10-27' }
+  },
+  {
+    uid: 'mock-student-biz-001',
+    displayName: '黒田 颯太',
+    role: UserRole.STUDENT,
+    organizationRole: OrganizationRole.STUDENT,
+    email: 'sota@demo-school.jp',
+    subscriptionPlan: SubscriptionPlan.TOB_PAID,
+    organizationName: 'MedAce Demo Academy',
+    stats: { xp: 820, level: 8, currentStreak: 3, lastLoginDate: '2023-10-27' }
+  },
+  {
+    uid: 'mock-instructor-001',
+    displayName: 'Oak 先生',
+    role: UserRole.INSTRUCTOR,
+    organizationRole: OrganizationRole.INSTRUCTOR,
+    email: 'oak@medace.com',
+    subscriptionPlan: SubscriptionPlan.TOB_PAID,
+    organizationName: 'MedAce Demo Academy'
+  },
+  {
+    uid: 'mock-group-admin-001',
+    displayName: '朝比奈 由奈',
+    role: UserRole.INSTRUCTOR,
+    organizationRole: OrganizationRole.GROUP_ADMIN,
+    email: 'manager@medace-demo.jp',
+    subscriptionPlan: SubscriptionPlan.TOB_PAID,
+    organizationName: 'MedAce Demo Academy'
+  },
+  {
+    uid: 'mock-admin-001',
+    displayName: 'システム管理者',
+    role: UserRole.ADMIN,
+    email: 'admin@medace.com',
+    subscriptionPlan: SubscriptionPlan.TOB_PAID,
+    organizationName: 'MedAce HQ'
+  }
 ];
+
+const slugifySegment = (value: string): string => value
+  .normalize('NFKC')
+  .toLowerCase()
+  .replace(/[^\p{Letter}\p{Number}]+/gu, '-')
+  .replace(/^-+|-+$/g, '')
+  .replace(/-{2,}/g, '-')
+  .slice(0, 48);
+
+const hashString = (value: string): string => {
+  let hash = 2166136261;
+  for (const char of value) {
+    hash ^= char.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+};
+
+const createBookId = (bookName: string, createdByUid?: string, uniqueSalt?: string): string => {
+  const slug = slugifySegment(bookName) || 'book';
+  const ownerSegment = createdByUid ? `${createdByUid.slice(0, 8)}-` : '';
+  const suffixBase = `${createdByUid || 'official'}:${bookName}:${uniqueSalt || ''}`;
+  const suffix = hashString(suffixBase);
+  return `${ownerSegment}${slug}-${suffix}`;
+};
 
 // Helper for Progress Calculation
 const calculatePercentage = (learned: number, total: number): number => {
@@ -70,6 +142,8 @@ const calculatePercentage = (learned: number, total: number): number => {
     if (pct === 100 && learned < total) return 99; // Prevent premature 100%
     return pct;
 };
+
+const WORKSHEET_STATUSES: Array<StudentWorksheetSnapshot['words'][number]['status']> = ['graduated', 'review', 'learning'];
 
 class IndexedDBStorageService implements IStorageService {
   private dbPromise: Promise<IDBDatabase>;
@@ -103,20 +177,31 @@ class IndexedDBStorageService implements IStorageService {
     return tx.objectStore(storeName);
   }
 
-  async login(role: UserRole): Promise<UserProfile | null> {
-    return IDB_MOCK_USERS.find(u => u.role === role) || null;
+  async login(role: UserRole, demoPassword?: string, organizationRole?: OrganizationRole): Promise<UserProfile | null> {
+    if (role === UserRole.ADMIN && demoPassword !== 'admin') return null;
+    const matchedUser = IDB_MOCK_USERS.find((user) => user.role === role && (organizationRole ? user.organizationRole === organizationRole : !user.organizationRole || user.role === UserRole.ADMIN)) || null;
+    if (matchedUser) {
+      await this.saveSession(matchedUser);
+    }
+    return matchedUser;
   }
 
-  async authenticate(email: string, password: string, isSignUp: boolean, role?: UserRole): Promise<UserProfile | null> {
+  async authenticate(email: string, password: string, isSignUp: boolean, role?: UserRole, displayName?: string): Promise<UserProfile | null> {
     if (isSignUp) {
-        return { 
+        const createdUser = { 
             uid: `mock-user-${Date.now()}`, 
-            displayName: email.split('@')[0], 
+            displayName: displayName?.trim() || email.split('@')[0], 
             role: role || UserRole.STUDENT, 
-            email 
+            email,
+            subscriptionPlan: SubscriptionPlan.TOC_FREE,
+            needsOnboarding: (role || UserRole.STUDENT) === UserRole.STUDENT,
         };
+        await this.saveSession(createdUser);
+        return createdUser;
     }
-    return IDB_MOCK_USERS.find(u => u.email === email) || IDB_MOCK_USERS[0];
+    const matchedUser = IDB_MOCK_USERS.find(u => u.email === email) || IDB_MOCK_USERS[0];
+    await this.saveSession(matchedUser);
+    return matchedUser;
   }
 
   async saveSession(user: UserProfile): Promise<void> {
@@ -180,23 +265,20 @@ class IndexedDBStorageService implements IStorageService {
       const row = csvRows[i];
       let bookName = row['BookName'] || row['book_name'] || row['_col0'] || defaultBookName;
       if (!bookName || typeof bookName !== 'string') bookName = defaultBookName;
-      
-      let bookId = bookName.toLowerCase().replace(/[^a-z0-9]+/g, '-');
-      if (createdByUid) {
-         bookId = `${createdByUid.slice(0,5)}-${bookId}-${Date.now()}`;
-      }
+      const groupKey = `${createdByUid || 'official'}:${bookName}`;
 
       const number = parseInt(row['Number'] || row['_col1'] || '0');
       const word = row['Word'] || row['_col2'] || '';
       const def = row['Meaning'] || row['_col3'] || '';
 
       if (word && def) {
-        if (!bookGroups.has(bookId)) {
+        if (!bookGroups.has(groupKey)) {
+            const bookId = createBookId(bookName, createdByUid, createdByUid ? String(Date.now()) : undefined);
             const desc = createdByUid 
                 ? JSON.stringify({ createdBy: createdByUid, type: 'USER_GENERATED' }) 
                 : 'Imported';
             
-            bookGroups.set(bookId, {
+            bookGroups.set(groupKey, {
                 meta: { 
                     id: bookId, 
                     title: bookName, 
@@ -208,7 +290,8 @@ class IndexedDBStorageService implements IStorageService {
                 words: []
             });
         }
-        bookGroups.get(bookId)!.words.push({
+        const bookId = bookGroups.get(groupKey)!.meta.id;
+        bookGroups.get(groupKey)!.words.push({
           id: `${bookId}_${number}_${i}`, bookId, number, word, definition: def, searchKey: word.toLowerCase()
         });
       }
@@ -469,10 +552,101 @@ class IndexedDBStorageService implements IStorageService {
   }
 
   async getAllStudentsProgress(): Promise<StudentSummary[]> {
-    return [
-        { uid: 'student1', name: '鈴木 健太', email: 'kenta@medace.com', totalLearned: 150, totalAttempts: 300, lastActive: Date.now(), riskLevel: StudentRiskLevel.SAFE, accuracy: 0.85 },
-        { uid: 'student2', name: '田中 陽葵', email: 'hina@medace.com', totalLearned: 45, totalAttempts: 60, lastActive: Date.now() - 86400000 * 4, riskLevel: StudentRiskLevel.DANGER, accuracy: 0.60 }
+    const sessionUser = await this.getSession();
+    const allStudents: StudentSummary[] = [
+      { uid: 'student-free-1', name: '鈴木 健太', email: 'kenta@medace.com', totalLearned: 150, totalAttempts: 300, lastActive: Date.now(), riskLevel: StudentRiskLevel.SAFE, accuracy: 0.85, subscriptionPlan: SubscriptionPlan.TOC_FREE },
+      { uid: 'student-biz-1', name: '黒田 颯太', email: 'sota@demo-school.jp', totalLearned: 96, totalAttempts: 130, lastActive: Date.now() - 86400000, riskLevel: StudentRiskLevel.WARNING, accuracy: 0.76, subscriptionPlan: SubscriptionPlan.TOB_PAID, organizationName: 'MedAce Demo Academy', lastNotificationAt: Date.now() - 86400000, lastNotificationMessage: 'Oak先生より: 昨日の復習を10語だけ戻しましょう。' },
+      { uid: 'student-biz-2', name: '田中 陽葵', email: 'hina@demo-school.jp', totalLearned: 45, totalAttempts: 60, lastActive: Date.now() - 86400000 * 4, riskLevel: StudentRiskLevel.DANGER, accuracy: 0.60, subscriptionPlan: SubscriptionPlan.TOB_PAID, organizationName: 'MedAce Demo Academy', lastNotificationAt: Date.now() - 86400000, lastNotificationMessage: 'Oak先生より: 2日空いたので、まずは10語だけ復習しましょう。' },
+      { uid: 'student-biz-3', name: '森 結月', email: 'yuzuki@demo-school.jp', totalLearned: 188, totalAttempts: 240, lastActive: Date.now(), riskLevel: StudentRiskLevel.SAFE, accuracy: 0.88, subscriptionPlan: SubscriptionPlan.TOB_PAID, organizationName: 'MedAce Demo Academy' }
     ];
+
+    if (sessionUser?.role === UserRole.ADMIN) {
+      return allStudents;
+    }
+
+    if (sessionUser?.organizationName) {
+      return allStudents.filter((student) => student.organizationName === sessionUser.organizationName);
+    }
+
+    return allStudents.filter((student) => !student.organizationName);
+  }
+
+  async getStudentWorksheetSnapshot(studentUid: string): Promise<StudentWorksheetSnapshot> {
+    const students = await this.getAllStudentsProgress();
+    const targetStudent = students.find((student) => student.uid === studentUid) || students[0];
+    const books = await this.getBooks();
+
+    let words: StudentWorksheetSnapshot['words'] = [];
+
+    if (books.length > 0) {
+      for (const [index, book] of books.slice(0, 3).entries()) {
+        const bookWords = await this.getWordsByBook(book.id);
+        const sampledWords = bookWords.slice(0, 4).map((word, wordIndex) => ({
+          wordId: word.id,
+          bookId: book.id,
+          bookTitle: book.title,
+          word: word.word,
+          definition: word.definition,
+          status: WORKSHEET_STATUSES[wordIndex % WORKSHEET_STATUSES.length],
+          lastStudiedAt: Date.now() - (index + wordIndex + 1) * 86400000,
+          attemptCount: 3 + wordIndex,
+          correctCount: 2 + wordIndex,
+        }));
+        words = [...words, ...sampledWords];
+      }
+    }
+
+    if (words.length === 0) {
+      words = [
+        {
+          wordId: 'worksheet-1',
+          bookId: 'mock-book-1',
+          bookTitle: 'ビジネス英単語 小テスト',
+          word: 'diagnosis',
+          definition: '診断',
+          status: 'graduated',
+          lastStudiedAt: Date.now() - 86400000,
+          attemptCount: 6,
+          correctCount: 5,
+        },
+        {
+          wordId: 'worksheet-2',
+          bookId: 'mock-book-1',
+          bookTitle: 'ビジネス英単語 小テスト',
+          word: 'treatment',
+          definition: '治療',
+          status: 'review',
+          lastStudiedAt: Date.now() - 2 * 86400000,
+          attemptCount: 4,
+          correctCount: 3,
+        },
+        {
+          wordId: 'worksheet-3',
+          bookId: 'mock-book-2',
+          bookTitle: '医療英語ベーシック',
+          word: 'symptom',
+          definition: '症状',
+          status: 'learning',
+          lastStudiedAt: Date.now() - 3 * 86400000,
+          attemptCount: 2,
+          correctCount: 1,
+        },
+      ];
+    }
+
+    return {
+      studentUid: targetStudent?.uid || studentUid,
+      studentName: targetStudent?.name || '対象生徒',
+      organizationName: targetStudent?.organizationName,
+      words,
+    };
+  }
+
+  async sendInstructorNotification(studentUid: string, message: string, triggerReason: string, usedAi: boolean): Promise<void> {
+      void studentUid;
+      void message;
+      void triggerReason;
+      void usedAi;
   }
 
   async resetAllData(): Promise<void> {
@@ -498,6 +672,158 @@ class IndexedDBStorageService implements IStorageService {
           req.onsuccess = () => resolve(req.result || null);
           req.onerror = () => resolve(null);
       });
+  }
+
+  async getDashboardSnapshot(uid: string): Promise<DashboardSnapshot> {
+      const sessionUser = await this.getSession();
+      const plan = getSubscriptionPolicy(sessionUser?.subscriptionPlan || SubscriptionPlan.TOC_FREE);
+      const allBooks = await this.getBooks();
+      const official: BookMetadata[] = [];
+      const mine: BookMetadata[] = [];
+
+      allBooks.forEach((book) => {
+          let isMine = false;
+          try {
+              if (book.description && book.description.includes(uid)) isMine = true;
+              const desc = JSON.parse(book.description || '{}');
+              if (desc.createdBy === uid) isMine = true;
+          } catch { }
+
+          if (isMine) mine.push(book);
+          else official.push(book);
+      });
+
+      official.sort((a, b) => (a.isPriority === b.isPriority ? a.title.localeCompare(b.title) : a.isPriority ? -1 : 1));
+      mine.sort((a, b) => b.id.localeCompare(a.id));
+
+      const progressResults = await Promise.all([...official, ...mine].map((book) => this.getBookProgress(uid, book.id)));
+      const progressMap: Record<string, BookProgress> = {};
+      progressResults.forEach((progress) => {
+          progressMap[progress.bookId] = progress;
+      });
+
+      const [dueCount, learningPlan, leaderboard, masteryDist, activityLogs] = await Promise.all([
+          this.getDueCount(uid),
+          this.getLearningPlan(uid),
+          this.getLeaderboard(uid),
+          this.getMasteryDistribution(uid),
+          this.getActivityLogs(uid),
+      ]);
+
+      return {
+          dueCount,
+          officialBooks: official,
+          myBooks: mine,
+          progressMap,
+          learningPlan,
+          leaderboard,
+          masteryDist,
+          activityLogs,
+          coachNotifications: [
+              {
+                  id: 1,
+                  studentUid: uid,
+                  studentName: sessionUser?.displayName || 'あなた',
+                  instructorUid: 'mock-instructor-001',
+                  instructorName: 'Oak先生',
+                  message: 'Oak先生より: 今週は復習のペースが良いです。この調子で明日も15分だけ続けましょう。',
+                  triggerReason: '学習フォローアップ',
+                  deliveryChannel: 'IN_APP',
+                  usedAi: false,
+                  createdAt: Date.now() - 3600_000,
+              },
+          ],
+          accountOverview: {
+              subscriptionPlan: sessionUser?.subscriptionPlan || SubscriptionPlan.TOC_FREE,
+              organizationRole: sessionUser?.organizationRole,
+              organizationName: sessionUser?.organizationName,
+              priceLabel: plan.priceLabel,
+              audienceLabel: plan.audienceLabel,
+              featureSummary: plan.featureSummary,
+              aiUsage: {
+                  monthKey: new Date().toISOString().slice(0, 7),
+                  estimatedCostMilliYen: 240,
+                  budgetMilliYen: plan.monthlyAiBudgetMilliYen,
+                  remainingMilliYen: Math.max(0, plan.monthlyAiBudgetMilliYen - 240),
+                  actionCounts: {
+                      generateGeminiSentence: 2,
+                  },
+              },
+          },
+      };
+  }
+
+  async getAdminDashboardSnapshot(): Promise<AdminDashboardSnapshot> {
+      const students = await this.getAllStudentsProgress();
+      const totalStudents = students.length;
+      const atRiskStudents = students
+        .filter((student) => student.riskLevel !== StudentRiskLevel.SAFE)
+        .sort((a, b) => a.lastActive - b.lastActive)
+        .slice(0, 6);
+
+      return {
+          overview: {
+              totalStudents,
+              activeToday: students.filter((student) => Date.now() - student.lastActive < 86400000).length,
+              active7d: students.filter((student) => Date.now() - student.lastActive < 7 * 86400000).length,
+              atRiskCount: atRiskStudents.length,
+              studentsWithPlan: Math.max(0, totalStudents - 1),
+              averageLearnedWords: totalStudents ? Math.round(students.reduce((sum, student) => sum + student.totalLearned, 0) / totalStudents) : 0,
+              averageAccuracyRate: totalStudents ? Math.round(students.reduce((sum, student) => sum + (student.accuracy || 0), 0) / totalStudents * 100) : 0,
+              officialBookCount: 0,
+              customBookCount: 0,
+              totalWordCount: 0,
+              reportedWordCount: 0,
+              notifications7d: 0,
+              aiRequestsThisMonth: 0,
+              aiCostThisMonthMilliYen: 0,
+          },
+          planBreakdown: Object.values(SubscriptionPlan).map((plan) => ({
+              plan,
+              count: students.filter((student) => student.subscriptionPlan === plan).length,
+          })),
+          riskBreakdown: [
+              { riskLevel: StudentRiskLevel.SAFE, count: students.filter((student) => student.riskLevel === StudentRiskLevel.SAFE).length },
+              { riskLevel: StudentRiskLevel.WARNING, count: students.filter((student) => student.riskLevel === StudentRiskLevel.WARNING).length },
+              { riskLevel: StudentRiskLevel.DANGER, count: students.filter((student) => student.riskLevel === StudentRiskLevel.DANGER).length },
+          ],
+          trend: [],
+          topBooks: [],
+          aiActions: [],
+          recentNotifications: [],
+          recentReports: [],
+          organizations: [],
+          atRiskStudents,
+      };
+  }
+
+  async getOrganizationDashboardSnapshot(): Promise<OrganizationDashboardSnapshot> {
+      const sessionUser = await this.getSession();
+      const students = await this.getAllStudentsProgress();
+      const instructors = IDB_MOCK_USERS
+        .filter((user) => user.role === UserRole.INSTRUCTOR && user.organizationName === sessionUser?.organizationName)
+        .map((user) => ({
+          uid: user.uid,
+          displayName: user.displayName,
+          email: user.email,
+          organizationRole: user.organizationRole,
+          notifiedStudentCount: user.organizationRole === OrganizationRole.GROUP_ADMIN ? students.length : Math.max(1, students.length - 1),
+          notifications7d: user.organizationRole === OrganizationRole.GROUP_ADMIN ? 5 : 3,
+        }));
+
+      return {
+        organizationName: sessionUser?.organizationName || 'MedAce Demo Academy',
+        subscriptionPlan: sessionUser?.subscriptionPlan || SubscriptionPlan.TOB_PAID,
+        totalMembers: instructors.length + students.length,
+        totalStudents: students.length,
+        totalInstructors: instructors.length,
+        activeStudents7d: students.filter((student) => Date.now() - student.lastActive < 7 * 86400000).length,
+        atRiskStudents: students.filter((student) => student.riskLevel !== StudentRiskLevel.SAFE).length,
+        learningPlanCount: Math.max(1, students.length - 1),
+        notifications7d: 8,
+        instructors,
+        atRiskStudentList: students.filter((student) => student.riskLevel !== StudentRiskLevel.SAFE),
+      };
   }
 
   // Analytics Mock (IDB)
@@ -563,8 +889,8 @@ class IndexedDBStorageService implements IStorageService {
   }
 }
 
-const USE_SUPABASE = true; 
+const USE_REMOTE_STORAGE = import.meta.env.VITE_STORAGE_MODE !== 'idb';
 
-export const storage: IStorageService = USE_SUPABASE 
-    ? new SupabaseStorageService() 
+export const storage: IStorageService = USE_REMOTE_STORAGE
+    ? new CloudflareStorageService()
     : new IndexedDBStorageService();

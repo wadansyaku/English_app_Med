@@ -1,10 +1,15 @@
 
 import React, { useEffect, useState } from 'react';
-import { BookMetadata, BookProgress, UserProfile, UserGrade, EnglishLevel, LearningPlan, LeaderboardEntry, MasteryDistribution, ActivityLog, STATUS_LABELS, GRADE_LABELS } from '../types';
+import { AccountOverview, BookMetadata, BookProgress, UserProfile, UserGrade, EnglishLevel, LearningPlan, LeaderboardEntry, MasteryDistribution, ActivityLog, InstructorNotification, STATUS_LABELS, GRADE_LABELS, SUBSCRIPTION_PLAN_LABELS, SubscriptionPlan } from '../types';
 import { storage } from '../services/storage';
 import { extractVocabularyFromText, extractVocabularyFromMedia, generateLearningPlan } from '../services/gemini';
+import { BRAND } from '../config/brand';
+import { isAdSupportedPlan, isBusinessPlan } from '../config/subscription';
 import { Play, BookOpen, Star, Loader2, Zap, BrainCircuit, Trophy, Plus, Sparkles, FileText, Image as ImageIcon, UploadCloud, Flame, Trash2, Settings, RefreshCw, User, Book, Calendar, Target, ArrowRight, Library, ChevronDown, ChevronUp, BarChart, Activity, Edit2, X, Check, Medal, Crown } from 'lucide-react';
 import Onboarding from './Onboarding';
+import StudyCompanion from './StudyCompanion';
+import PlanExperiencePanel from './PlanExperiencePanel';
+import AdSenseSlot from './AdSenseSlot';
 
 interface DashboardProps {
   user: UserProfile;
@@ -192,9 +197,9 @@ const ActivityBarChart: React.FC<{ logs: ActivityLog[], dailyGoal?: number }> = 
 
 // Helper for League Calculation
 const getLeague = (level: number) => {
-    if (level >= 20) return { name: 'Gold', icon: <Crown className="w-3 h-3 fill-yellow-400 text-yellow-600" />, color: 'bg-yellow-50 text-yellow-700 border-yellow-200' };
-    if (level >= 10) return { name: 'Silver', icon: <Medal className="w-3 h-3 fill-slate-300 text-slate-500" />, color: 'bg-slate-100 text-slate-700 border-slate-200' };
-    return { name: 'Bronze', icon: <Medal className="w-3 h-3 fill-orange-300 text-orange-600" />, color: 'bg-orange-50 text-orange-800 border-orange-200' };
+    if (level >= 20) return { name: 'ゴールド', icon: <Crown className="w-3 h-3 fill-yellow-400 text-yellow-600" />, color: 'bg-yellow-50 text-yellow-700 border-yellow-200' };
+    if (level >= 10) return { name: 'シルバー', icon: <Medal className="w-3 h-3 fill-slate-300 text-slate-500" />, color: 'bg-slate-100 text-slate-700 border-slate-200' };
+    return { name: 'ブロンズ', icon: <Medal className="w-3 h-3 fill-orange-300 text-orange-600" />, color: 'bg-orange-50 text-orange-800 border-orange-200' };
 };
 
 
@@ -211,6 +216,8 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onSelectBook }) => {
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const [masteryDist, setMasteryDist] = useState<MasteryDistribution | null>(null);
   const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([]);
+  const [coachNotifications, setCoachNotifications] = useState<InstructorNotification[]>([]);
+  const [accountOverview, setAccountOverview] = useState<AccountOverview | null>(null);
 
   // Toggle State for Library
   const [showLibrary, setShowLibrary] = useState(false);
@@ -255,7 +262,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onSelectBook }) => {
       return <Onboarding 
                 user={user} 
                 isRetake={true}
-                historySummary={`Current Level: ${user.englishLevel}, XP: ${user.stats?.xp}, Grade: ${GRADE_LABELS[user.grade || UserGrade.ADULT]}`}
+                historySummary={`現在レベル: ${user.englishLevel}, XP: ${user.stats?.xp}, 学年・属性: ${GRADE_LABELS[user.grade || UserGrade.ADULT]}`}
                 onComplete={(updated) => {
                     storage.updateSessionUser(updated); 
                     setShowOnboarding(false);
@@ -267,51 +274,17 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onSelectBook }) => {
   const loadDashboardData = async () => {
       try {
         setLoading(true);
-        const count = await storage.getDueCount(user.uid);
-        setDueCount(count);
-
-        // Load Books
-        const allBooks = await storage.getBooks();
-        const official: BookMetadata[] = [];
-        const mine: BookMetadata[] = [];
-
-        allBooks.forEach(b => {
-            let isMine = false;
-            try {
-                if (b.description && b.description.includes(user.uid)) isMine = true;
-                const desc = JSON.parse(b.description || '{}');
-                if (desc.createdBy === user.uid) isMine = true;
-            } catch { }
-
-            if (isMine) mine.push(b);
-            else official.push(b);
-        });
-
-        official.sort((a, b) => (a.isPriority === b.isPriority ? a.title.localeCompare(b.title) : a.isPriority ? -1 : 1));
-        mine.sort((a, b) => b.id.localeCompare(a.id));
-
-        setBooks(official);
-        setMyBooks(mine);
-
-        // Progress
-        const progressPromises = [...official, ...mine].map(book => storage.getBookProgress(user.uid, book.id));
-        const progressResults = await Promise.all(progressPromises);
-        const pMap: Record<string, BookProgress> = {};
-        progressResults.forEach(p => { pMap[p.bookId] = p; });
-        setProgressMap(pMap);
-
-        // Load Learning Plan
-        const plan = await storage.getLearningPlan(user.uid);
-        setLearningPlan(plan);
-
-        // Load Analytics
-        const lb = await storage.getLeaderboard(user.uid);
-        setLeaderboard(lb);
-        const dist = await storage.getMasteryDistribution(user.uid);
-        setMasteryDist(dist);
-        const logs = await storage.getActivityLogs(user.uid);
-        setActivityLogs(logs);
-
+        const snapshot = await storage.getDashboardSnapshot(user.uid);
+        setDueCount(snapshot.dueCount);
+        setBooks(snapshot.officialBooks);
+        setMyBooks(snapshot.myBooks);
+        setProgressMap(snapshot.progressMap);
+        setLearningPlan(snapshot.learningPlan);
+        setLeaderboard(snapshot.leaderboard);
+        setMasteryDist(snapshot.masteryDist);
+        setActivityLogs(snapshot.activityLogs);
+        setCoachNotifications(snapshot.coachNotifications);
+        setAccountOverview(snapshot.accountOverview);
       } catch (error) {
         console.error("Failed to load dashboard data", error);
       } finally {
@@ -455,6 +428,47 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onSelectBook }) => {
       }
   };
 
+  const plannedBooks = learningPlan && learningPlan.selectedBookIds.length > 0
+    ? books.filter((book) => learningPlan.selectedBookIds.includes(book.id))
+    : books.filter((book) => book.isPriority).slice(0, 3);
+  const progressEntries = Object.values(progressMap) as BookProgress[];
+  const totalTrackedWords = progressEntries.reduce((sum, progress) => sum + progress.totalCount, 0);
+  const learnedWords = progressEntries.reduce((sum, progress) => sum + progress.learnedCount, 0);
+  const coverageRate = totalTrackedWords > 0 ? Math.round((learnedWords / totalTrackedWords) * 100) : 0;
+  const userLeague = getLeague(user.stats?.level || 1);
+  const headline = dueCount > 0
+    ? `${dueCount}語が復習待ちです`
+    : learningPlan
+      ? '今日の学習導線は整っています'
+      : 'まずは学習プランを決めましょう';
+  const heroCopy = dueCount > 0
+    ? '復習が積み上がる前に、今日のクエストで流れを戻すのが最短です。'
+    : learningPlan
+      ? '診断結果と現在の進捗から、次に触るべき教材だけを前に出しています。'
+      : '診断結果は決まっているので、ここでは毎日の単語数と対象教材だけ決めれば始められます。';
+  const currentPlan = accountOverview?.subscriptionPlan || user.subscriptionPlan || SubscriptionPlan.TOC_FREE;
+  const showAdSlots = isAdSupportedPlan(currentPlan);
+  const isBusinessWorkspace = isBusinessPlan(currentPlan) && !!user.organizationName;
+  const workspaceHeadline = isBusinessWorkspace
+    ? `${user.organizationName} の学習スペース`
+    : showAdSlots
+      ? '広告付きのセルフサーブ学習'
+      : '広告なしで広げる個人学習';
+  const workspaceCopy = isBusinessWorkspace
+    ? '講師フォローとグループ教材が乗る導線です。個人学習ではなく、組織運用の流れに合わせて学習できます。'
+    : showAdSlots
+      ? 'フリープランではGoogle AdSenseを表示しつつ、基本学習を無料で継続できる構成にしています。'
+      : '上位プランでは広告を外し、教材化やAI支援の幅を広げて集中しやすくしています。';
+  const aiBudgetPercent = accountOverview
+    ? Math.min(100, Math.round((accountOverview.aiUsage.estimatedCostMilliYen / Math.max(accountOverview.aiUsage.budgetMilliYen, 1)) * 100))
+    : 0;
+  const aiUsageLabel = aiBudgetPercent >= 85 ? '控えめに利用中' : aiBudgetPercent >= 55 ? '通常利用中' : 'ゆとりあり';
+  const aiUsageCopy = aiBudgetPercent >= 85
+    ? '今月は軽いAIサポートを中心にご利用いただく想定です。'
+    : aiBudgetPercent >= 55
+      ? '今月のAIサポートは通常どおりご利用いただけます。'
+      : '今月のAIサポートは十分な余裕があります。';
+
   if (loading && books.length === 0) {
     return (
       <div className="flex flex-col justify-center items-center h-[60vh] text-medace-500">
@@ -467,21 +481,11 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onSelectBook }) => {
   return (
     <div className="space-y-6 md:space-y-10 animate-in fade-in duration-500 relative pb-20">
         
-        {/* Header Actions */}
-        <div className="flex justify-end mb-4 relative z-20">
-             <button 
-                onClick={() => setShowSettingsModal(true)}
-                className="flex items-center gap-2 text-slate-500 hover:text-medace-600 bg-white px-4 py-2 rounded-full border border-slate-200 shadow-sm transition-colors text-sm font-medium hover:bg-slate-50"
-             >
-                 <Settings className="w-4 h-4" /> 設定・プロフィール
-             </button>
-        </div>
-
         {/* MODALS */}
         
         {/* Plan Edit Modal */}
         {showPlanEditModal && learningPlan && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm animate-in fade-in">
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-medace-900/35 backdrop-blur-sm animate-in fade-in">
                 <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 relative max-h-[90vh] overflow-y-auto">
                     <button onClick={() => setShowPlanEditModal(false)} className="absolute top-4 right-4 text-slate-400 hover:text-slate-600">✕</button>
                     <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
@@ -528,7 +532,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onSelectBook }) => {
 
         {/* Settings Modal */}
         {showSettingsModal && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm animate-in fade-in">
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-medace-900/35 backdrop-blur-sm animate-in fade-in">
                 <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 relative">
                     <button onClick={() => setShowSettingsModal(false)} className="absolute top-4 right-4 text-slate-400 hover:text-slate-600">✕</button>
                     <div className="flex items-center gap-3 mb-6 border-b border-slate-100 pb-4">
@@ -555,7 +559,16 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onSelectBook }) => {
                                 </button>
                             </div>
                         </div>
-                        <button onClick={handleSaveProfile} disabled={isSavingProfile} className="w-full py-3 bg-slate-800 text-white rounded-xl font-bold hover:bg-slate-700 transition-all mt-4 shadow-lg">
+                        {accountOverview && (
+                            <div>
+                                <label className="block text-xs font-bold text-slate-500 mb-1">現在のプラン</label>
+                                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                                    <div className="font-bold text-slate-800">{SUBSCRIPTION_PLAN_LABELS[accountOverview.subscriptionPlan]}</div>
+                                    <div className="mt-1 text-xs text-slate-500">{accountOverview.audienceLabel} / {accountOverview.priceLabel}</div>
+                                </div>
+                            </div>
+                        )}
+                        <button onClick={handleSaveProfile} disabled={isSavingProfile} className="w-full py-3 bg-medace-700 text-white rounded-xl font-bold hover:bg-medace-800 transition-all mt-4 shadow-lg">
                             {isSavingProfile ? '保存中...' : '変更を保存'}
                         </button>
                     </div>
@@ -565,7 +578,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onSelectBook }) => {
 
         {/* Create Modal */}
         {showCreateModal && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm animate-in fade-in">
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-medace-900/35 backdrop-blur-sm animate-in fade-in">
                 <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 relative max-h-[90vh] overflow-y-auto">
                     <button onClick={() => setShowCreateModal(false)} className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 font-bold">✕</button>
                     <div className="text-center mb-6">
@@ -617,66 +630,239 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onSelectBook }) => {
             </div>
         )}
 
-      {/* SECTION: Learning Plan Widget (Top) */}
-      {learningPlan ? (
-          <div className="bg-white rounded-2xl border-l-4 border-medace-500 shadow-sm p-6 relative overflow-hidden">
-              <div className="absolute top-0 right-0 p-6 opacity-10"><Target size={100} /></div>
-              <div className="relative z-10">
-                  <div className="flex items-center justify-between mb-2">
-                     <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-                        <Calendar className="w-5 h-5 text-medace-500" /> 現在の学習プラン
-                     </h2>
-                     <button onClick={() => setShowPlanEditModal(true)} className="text-xs text-slate-400 hover:text-medace-600 flex items-center gap-1 bg-slate-50 px-2 py-1 rounded-full">
-                         <Edit2 className="w-3 h-3" /> プラン調整
-                     </button>
-                  </div>
-                  <p className="text-2xl font-bold text-medace-600 mb-4">"{learningPlan.goalDescription}"</p>
-                  
-                  <div className="flex flex-wrap gap-4 mb-4">
-                      <div className="bg-slate-50 px-4 py-2 rounded-lg border border-slate-100">
-                          <span className="block text-xs text-slate-500 font-bold uppercase">1日の目標</span>
-                          <span className="text-lg font-bold text-slate-800">{learningPlan.dailyWordGoal} 単語</span>
-                      </div>
-                      <div className="bg-slate-50 px-4 py-2 rounded-lg border border-slate-100">
-                          <span className="block text-xs text-slate-500 font-bold uppercase">目標期日</span>
-                          <span className="text-lg font-bold text-slate-800">{learningPlan.targetDate}</span>
-                      </div>
-                  </div>
-
-                  <button 
-                    onClick={() => onSelectBook('smart-session', 'study')}
-                    className="inline-flex items-center gap-2 px-6 py-3 bg-medace-600 text-white rounded-xl font-bold hover:bg-medace-700 transition-colors shadow-lg"
-                  >
-                      <Play className="w-4 h-4 fill-current" /> 今日のクエストを開始
-                  </button>
-                  <button 
-                    onClick={handleGeneratePlan}
-                    className="ml-3 text-sm text-slate-400 hover:text-slate-600 underline"
-                  >
-                    AIプラン再生成
-                  </button>
-              </div>
-          </div>
-      ) : (
-          <div className="bg-gradient-to-r from-slate-800 to-slate-900 rounded-2xl p-6 text-white shadow-lg flex flex-col md:flex-row items-center justify-between gap-6">
-              <div>
-                  <h2 className="text-xl font-bold mb-2 flex items-center gap-2">
-                      <Target className="w-6 h-6 text-medace-400" /> 学習プランを作成
-                  </h2>
-                  <p className="text-slate-300 text-sm">
-                      目標とレベルに合わせて、AIが最適なカリキュラムを提案します。
-                      <br/>迷わず最短距離でゴールを目指しましょう。
-                  </p>
+      <div className="grid gap-6 xl:grid-cols-[1.08fr_0.92fr]">
+        <section className="relative overflow-hidden rounded-[32px] bg-[linear-gradient(135deg,#2F1609_0%,#66321A_42%,#F66D0B_100%)] p-7 md:p-8 text-white shadow-[0_24px_60px_rgba(228,94,4,0.18)]">
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,_rgba(255,191,82,0.34),_transparent_24%),radial-gradient(circle_at_bottom_left,_rgba(252,215,151,0.24),_transparent_22%)]"></div>
+          <div className="relative">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-white/70">
+                  {BRAND.productLabel}
+                </span>
+                {accountOverview && (
+                  <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-bold text-white/85">
+                    {SUBSCRIPTION_PLAN_LABELS[accountOverview.subscriptionPlan]}
+                  </span>
+                )}
+                <span className={`rounded-full border px-3 py-1 text-xs font-bold ${userLeague.color}`}>
+                  {userLeague.name}
+                </span>
               </div>
               <button 
-                onClick={handleGeneratePlan}
-                disabled={generatingPlan}
-                className="px-6 py-3 bg-white text-slate-900 rounded-xl font-bold hover:bg-slate-100 transition-colors flex items-center gap-2 whitespace-nowrap"
+                onClick={() => setShowSettingsModal(true)}
+                className="flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-bold text-white/80 transition-colors hover:bg-white/10"
               >
-                  {generatingPlan ? <Loader2 className="animate-spin w-4 h-4" /> : <Sparkles className="w-4 h-4 text-medace-600" />}
-                  プランを生成
+                <Settings className="w-4 h-4" /> 設定・プロフィール
               </button>
+            </div>
+
+            <div className="mt-7 max-w-2xl">
+              <p className="text-sm font-bold uppercase tracking-[0.16em] text-medace-200">{GRADE_LABELS[user.grade || UserGrade.ADULT]} / {user.englishLevel || '未診断'}</p>
+              <h2 className="mt-3 text-3xl md:text-4xl font-black tracking-tight leading-tight">{headline}</h2>
+              <p className="mt-4 text-sm md:text-base leading-relaxed text-white/74">{heroCopy}</p>
+              <div className="mt-4 rounded-3xl border border-white/10 bg-white/5 px-4 py-4">
+                <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-white/55">Workspace</div>
+                <div className="mt-2 text-lg font-black text-white">{workspaceHeadline}</div>
+                <div className="mt-2 text-sm leading-relaxed text-white/72">{workspaceCopy}</div>
+              </div>
+            </div>
+
+            <div className="mt-8 flex flex-wrap gap-3">
+              <button 
+                onClick={() => onSelectBook('smart-session', 'study')}
+                className="inline-flex items-center gap-2 rounded-2xl bg-white px-5 py-3 text-sm font-bold text-medace-900 hover:bg-medace-50"
+              >
+                <Play className="w-4 h-4 fill-current" /> 今日のクエストを開始
+              </button>
+              {learningPlan ? (
+                <button
+                  onClick={() => setShowPlanEditModal(true)}
+                  className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-5 py-3 text-sm font-bold text-white/85 hover:bg-white/10"
+                >
+                  <Edit2 className="w-4 h-4" /> プランを調整
+                </button>
+              ) : (
+                <button
+                  onClick={handleGeneratePlan}
+                  disabled={generatingPlan}
+                  className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-5 py-3 text-sm font-bold text-white/85 hover:bg-white/10 disabled:opacity-50"
+                >
+                  {generatingPlan ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                  AIでプランを作る
+                </button>
+              )}
+            </div>
+
+            <div className="mt-8 grid gap-3 md:grid-cols-3">
+              <div className="rounded-3xl border border-white/10 bg-white/5 px-5 py-5">
+                <div className="text-xs font-bold uppercase tracking-[0.18em] text-white/55">今日の復習</div>
+                <div className="mt-3 text-4xl font-black tracking-tight">{dueCount}</div>
+                <div className="mt-2 text-sm text-white/68">復習待ちの単語数</div>
+              </div>
+              <div className="rounded-3xl border border-white/10 bg-white/5 px-5 py-5">
+                <div className="text-xs font-bold uppercase tracking-[0.18em] text-white/55">着手率</div>
+                <div className="mt-3 text-4xl font-black tracking-tight">{coverageRate}%</div>
+                <div className="mt-2 text-sm text-white/68">{learnedWords} / {totalTrackedWords} 語に着手</div>
+              </div>
+              <div className="rounded-3xl border border-white/10 bg-white/5 px-5 py-5">
+                <div className="text-xs font-bold uppercase tracking-[0.18em] text-white/55">AI利用枠</div>
+                <div className="mt-3 text-2xl font-black tracking-tight">{aiUsageLabel}</div>
+                <div className="mt-2 text-sm text-white/68">{aiUsageCopy}</div>
+              </div>
+            </div>
           </div>
+        </section>
+
+        <div className="space-y-6">
+          <section className="rounded-[32px] border border-slate-200 bg-white p-6 md:p-7 shadow-sm">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">学習プラン</p>
+                <h3 className="mt-2 text-2xl font-black tracking-tight text-slate-950">
+                  {learningPlan ? '今日の学習プラン' : 'まだプラン未作成'}
+                </h3>
+              </div>
+              {learningPlan && (
+                <button onClick={() => setShowPlanEditModal(true)} className="rounded-full bg-slate-50 px-3 py-2 text-xs font-bold text-slate-500 hover:text-medace-600">
+                  編集
+                </button>
+              )}
+            </div>
+
+            {learningPlan ? (
+              <>
+                <p className="mt-4 text-base font-bold text-medace-600">"{learningPlan.goalDescription}"</p>
+                <div className="mt-5 grid gap-3 sm:grid-cols-3">
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                    <div className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">1日の目標</div>
+                    <div className="mt-2 text-2xl font-black text-slate-950">{learningPlan.dailyWordGoal}</div>
+                    <div className="text-sm text-slate-500">語 / 日</div>
+                  </div>
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                    <div className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">目標日</div>
+                    <div className="mt-2 text-lg font-black text-slate-950">{learningPlan.targetDate}</div>
+                    <div className="text-sm text-slate-500">完了予定</div>
+                  </div>
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                    <div className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">対象教材</div>
+                    <div className="mt-2 text-2xl font-black text-slate-950">{plannedBooks.length}</div>
+                    <div className="text-sm text-slate-500">優先教材</div>
+                  </div>
+                </div>
+                <div className="mt-5 flex flex-wrap gap-2">
+                  {plannedBooks.slice(0, 4).map((book) => (
+                    <span key={book.id} className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-600">
+                      {book.title}
+                    </span>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <div className="mt-5 rounded-3xl bg-[linear-gradient(135deg,#66321A_0%,#F66D0B_100%)] px-5 py-5 text-white">
+                <p className="text-sm leading-relaxed text-white/75">
+                  診断結果と優先教材から、毎日の単語数とコースを自動で提案します。迷う時間を先に消します。
+                </p>
+                <button
+                  onClick={handleGeneratePlan}
+                  disabled={generatingPlan}
+                  className="mt-4 inline-flex items-center gap-2 rounded-2xl bg-white px-4 py-3 text-sm font-bold text-medace-900 hover:bg-medace-50 disabled:opacity-50"
+                >
+                  {generatingPlan ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                  プランを生成
+                </button>
+              </div>
+            )}
+          </section>
+
+          {accountOverview && (
+            <section className="rounded-[32px] border border-slate-200 bg-white p-6 md:p-7 shadow-sm">
+              <p className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">ご利用プラン</p>
+              <div className="mt-2 flex items-center justify-between gap-4">
+                <h3 className="text-xl font-black tracking-tight text-slate-950">{SUBSCRIPTION_PLAN_LABELS[accountOverview.subscriptionPlan]}</h3>
+                <span className="rounded-full bg-slate-50 px-3 py-1 text-xs font-bold text-slate-500">
+                  {accountOverview.audienceLabel} / {accountOverview.priceLabel}
+                </span>
+              </div>
+              <div className="mt-5">
+                <div className="flex items-center justify-between text-xs font-bold uppercase tracking-[0.18em] text-slate-400">
+                  <span>AIサポート利用状況</span>
+                  <span>{aiBudgetPercent}%</span>
+                </div>
+                <div className="mt-2 h-2.5 overflow-hidden rounded-full bg-slate-100">
+                  <div className="h-full rounded-full bg-gradient-to-r from-medace-300 to-medace-500" style={{ width: `${aiBudgetPercent}%` }}></div>
+                </div>
+              </div>
+              <div className="mt-4 rounded-2xl bg-medace-50 px-4 py-3 text-sm text-medace-900">
+                <div className="font-bold">{aiUsageLabel}</div>
+                <div className="mt-1 text-medace-900/70">{aiUsageCopy}</div>
+              </div>
+              <div className="mt-4 space-y-2">
+                {accountOverview.featureSummary.map((item) => (
+                  <div key={item} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                    {item}
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+        </div>
+      </div>
+
+      {accountOverview && (
+        <PlanExperiencePanel
+          user={user}
+          accountOverview={accountOverview}
+          plannedBookCount={plannedBooks.length}
+          coachNotificationCount={coachNotifications.length}
+        />
+      )}
+
+      <StudyCompanion
+        user={user}
+        dueCount={dueCount}
+        learnedWords={learnedWords}
+        totalTrackedWords={totalTrackedWords}
+        coverageRate={coverageRate}
+        learningPlan={learningPlan}
+        activityLogs={activityLogs}
+        masteryDist={masteryDist}
+        onStartQuest={() => onSelectBook('smart-session', 'study')}
+      />
+
+      {showAdSlots && (
+        <AdSenseSlot
+          slot={import.meta.env.VITE_ADSENSE_SLOT_DASHBOARD_SECONDARY}
+          label="Sponsored"
+          minHeightClassName="min-h-[180px]"
+        />
+      )}
+
+      {coachNotifications.length > 0 && (
+        <section className="rounded-[32px] border border-slate-200 bg-white p-6 md:p-7 shadow-sm">
+          <div className="flex items-center gap-3">
+            <BrainCircuit className="w-5 h-5 text-medace-600" />
+            <div>
+              <p className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">講師フォロー</p>
+              <h3 className="mt-1 text-xl font-black tracking-tight text-slate-950">講師からのフォロー</h3>
+            </div>
+          </div>
+          <div className="mt-5 grid gap-3 md:grid-cols-3">
+            {coachNotifications.map((notification) => (
+              <div key={notification.id} className="rounded-3xl border border-slate-200 bg-slate-50 px-5 py-5">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-sm font-bold text-slate-900">{notification.instructorName}</div>
+                  <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">
+                    {notification.usedAi ? 'AI下書き' : '手動'}
+                  </div>
+                </div>
+                <p className="mt-3 text-sm leading-relaxed text-slate-700">{notification.message}</p>
+                <div className="mt-4 text-xs text-slate-400">
+                  {new Date(notification.createdAt).toLocaleString('ja-JP')}
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
       )}
 
       {/* SECTION: Analytics & Ranking & Status */}
@@ -752,7 +938,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onSelectBook }) => {
                                   </div>
                                   <div>
                                       <div className={`text-sm font-bold flex items-center gap-2 ${entry.isCurrentUser ? 'text-medace-700' : 'text-slate-700'}`}>
-                                          {entry.displayName} {entry.isCurrentUser && <span className="text-[10px] bg-medace-200 text-medace-800 px-1.5 rounded">YOU</span>}
+                                          {entry.displayName} {entry.isCurrentUser && <span className="text-[10px] bg-medace-200 text-medace-800 px-1.5 rounded">あなた</span>}
                                       </div>
                                       <div className="flex items-center gap-1.5 mt-0.5">
                                           <div className={`text-[10px] px-1.5 py-0.5 rounded border flex items-center gap-1 ${league.color}`}>
