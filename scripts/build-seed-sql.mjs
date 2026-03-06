@@ -258,8 +258,22 @@ const sqlValue = (value) => {
 
 const getDatasetLabel = (catalogSource) => {
   if (catalogSource === 'STEADY_STUDY_ORIGINAL') return 'Steady Study Original';
-  if (catalogSource === 'LICENSED_PARTNER') return 'Licensed Partner Catalog';
-  return 'Imported Catalog';
+  if (catalogSource === 'LICENSED_PARTNER') return '既存公式教材';
+  return '取り込み教材';
+};
+
+const buildOfficialBookDescription = (catalogSource, datasetLabel) => {
+  if (catalogSource === 'LICENSED_PARTNER') {
+    return '既存の公式単語帳をそのまま学習できます。';
+  }
+  return `${datasetLabel}として登録された教材です。`;
+};
+
+const buildOfficialBookSourceContext = (catalogSource, datasetLabel) => {
+  if (catalogSource === 'LICENSED_PARTNER') {
+    return '既存公式教材';
+  }
+  return datasetLabel;
 };
 
 const getFormat = (rows) => {
@@ -355,10 +369,10 @@ for (const dataset of datasets) {
         accessScope: dataset.accessScope,
         description: isOriginalWordbank
           ? `オリジナル単語データベースを ${bookName} (${row.__balancedOriginalAudience || row['grade_bucket_default_label'] || row['stage_label'] || '学年別'}) 向けに再編成`
-          : `${datasetLabel} として ${inputBasename} から投入`,
+          : buildOfficialBookDescription(dataset.catalogSource, datasetLabel),
         sourceContext: isOriginalWordbank
           ? `オリジナル単語データベース / ${row.__balancedOriginalAudience || row['stage_label'] || 'Original Wordbank'}`
-          : inputBasename,
+          : buildOfficialBookSourceContext(dataset.catalogSource, datasetLabel),
         sortOrder: isOriginalWordbank
           ? Number.parseInt(row.__balancedOriginalOrder || row['grade_bucket_default_order'] || row['group_order'] || String(grouped.size + 1), 10) || grouped.size + 1
           : grouped.size + 1,

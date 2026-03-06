@@ -239,12 +239,21 @@ const createEphemeralDemoUser = (role: UserRole, organizationRole?: Organization
 
 const normalizeOfficialBookText = (value: string | undefined): string | undefined => {
   if (!value) return undefined;
-  return value
+  const normalized = value
     .replaceAll('Nanjyo English App のオリジナル単語データベース', 'オリジナル単語データベース')
     .replaceAll('Nanjyo English App', 'オリジナル単語データベース')
     .replaceAll('オリジナル単語データベース のオリジナル単語データベース', 'オリジナル単語データベース')
     .replaceAll('NanjyoEnglishApp', 'original_wordbank')
-    .trim() || undefined;
+    .trim();
+
+  if (!normalized) return undefined;
+  if (/Licensed Partner Catalog/i.test(normalized)) return undefined;
+  if (/Imported Catalog/i.test(normalized)) return undefined;
+  if (/MASTER_DATABASE_REFINED\.csv/i.test(normalized)) return undefined;
+  if (/\.csv\b/i.test(normalized) && /投入/.test(normalized)) return undefined;
+  if (/として\s+.+\.csv\s+から投入/.test(normalized)) return undefined;
+
+  return normalized;
 };
 
 const normalizeBookVisibilityPolicy = (book: BookMetadata): BookMetadata => {
