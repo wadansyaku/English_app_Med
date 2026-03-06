@@ -8,37 +8,13 @@ import AdminPanel from './components/AdminPanel';
 import InstructorDashboard from './components/InstructorDashboard';
 import BusinessAdminDashboard from './components/BusinessAdminDashboard';
 import Onboarding from './components/Onboarding';
-import { OrganizationRole, SubscriptionPlan, UserRole, UserProfile } from './types';
+import PublicInfoPage from './components/PublicInfoPage';
+import { OrganizationRole, UserRole, UserProfile } from './types';
 import { storage } from './services/storage';
 import { AUTH_COPY, BRAND } from './config/brand';
 import { getHomeViewForUser, isGroupAdmin } from './config/access';
-import { getSubscriptionPolicy } from './config/subscription';
 import { getDemoAccessWindowLabel, isDemoEmail } from './utils/demo';
-import { ArrowRight, BookOpen, Building2, CheckCircle2, ChevronDown, ChevronUp, Loader2, Lock, LogIn, Mail, Sparkles, User, UserPlus } from 'lucide-react';
-
-const LOGIN_PLAN_PREVIEWS = [
-  SubscriptionPlan.TOC_FREE,
-  SubscriptionPlan.TOC_PAID,
-  SubscriptionPlan.TOB_PAID,
-].map((plan) => getSubscriptionPolicy(plan));
-
-const PLATFORM_HIGHLIGHTS = [
-  {
-    icon: <BookOpen className="h-4 w-4" />,
-    label: '個人学習',
-    detail: '診断、復習、学習プランまでを1つの流れで進められます。',
-  },
-  {
-    icon: <Building2 className="h-4 w-4" />,
-    label: '学校・教室運用',
-    detail: '講師フォロー、担当割当、教材権限まで同じ画面群で管理できます。',
-  },
-  {
-    icon: <Sparkles className="h-4 w-4" />,
-    label: '教材活用',
-    detail: '既存の公式単語帳と My単語帳の両方を使い分けられます。',
-  },
-];
+import { ArrowRight, CheckCircle2, ChevronDown, ChevronUp, Loader2, Lock, LogIn, Mail, User, UserPlus } from 'lucide-react';
 
 const BUSINESS_DEMO_OPTIONS: Array<{
   title: string;
@@ -88,6 +64,7 @@ const App: React.FC = () => {
   const [authMode, setAuthMode] = useState<'LOGIN' | 'SIGNUP'>('LOGIN');
   const [authError, setAuthError] = useState<string | null>(null);
   const [showAlternateAccess, setShowAlternateAccess] = useState(false);
+  const [showPublicInfo, setShowPublicInfo] = useState(false);
 
   // --- Restore Session (Async) ---
   useEffect(() => {
@@ -202,6 +179,7 @@ const App: React.FC = () => {
     setConfirmPassword('');
     setAuthError(null);
     setShowAlternateAccess(false);
+    setShowPublicInfo(false);
   };
 
   const handleBookSelect = (bookId: string, mode: 'study' | 'quiz') => {
@@ -227,6 +205,10 @@ const App: React.FC = () => {
     }
 
     if (!user) {
+      if (showPublicInfo) {
+        return <PublicInfoPage onBack={() => setShowPublicInfo(false)} />;
+      }
+
       return (
         <div className="max-w-5xl mx-auto mt-6 lg:mt-10 overflow-hidden rounded-[32px] border border-medace-100 bg-white shadow-[0_28px_90px_rgba(246,109,11,0.12)]">
           <div className="grid lg:grid-cols-[1.04fr_0.96fr]">
@@ -428,34 +410,19 @@ const App: React.FC = () => {
               </form>
 
               <div className="mt-6 border-t border-slate-100 pt-6">
-                <div className="grid gap-3 md:grid-cols-3">
-                  {PLATFORM_HIGHLIGHTS.map((item) => (
-                    <div key={item.label} className="rounded-2xl border border-slate-200 bg-white px-4 py-4 shadow-sm">
-                      <div className="flex items-center gap-2 text-medace-600">
-                        {item.icon}
-                        <span className="text-xs font-bold uppercase tracking-[0.16em]">{item.label}</span>
-                      </div>
-                      <div className="mt-3 text-sm leading-relaxed text-slate-600">{item.detail}</div>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="mt-5 rounded-[28px] border border-slate-200 bg-slate-50/80 p-5">
-                  <div className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">Plan Overview</div>
-                  <h3 className="mt-2 text-lg font-black text-slate-950">料金体系の考え方</h3>
+                <div className="rounded-[28px] border border-slate-200 bg-slate-50/80 p-5">
+                  <div className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">Public Guide</div>
+                  <h3 className="mt-2 text-lg font-black text-slate-950">詳しい説明と料金は別ページへ</h3>
                   <p className="mt-2 text-sm leading-relaxed text-slate-500">
-                    個人利用はすぐ始められる導線、ビジネス利用は教材配信と運用画面まで含めた個別ご案内を前提にしています。
+                    ホーム画面はログインと体験開始に絞り、アプリ説明や料金の考え方は公開ページにまとめています。
                   </p>
-                  <div className="mt-4 grid gap-3 md:grid-cols-3">
-                    {LOGIN_PLAN_PREVIEWS.map((plan) => (
-                      <div key={plan.plan} className="rounded-2xl border border-slate-200 bg-white px-4 py-4">
-                        <div className="text-xs font-bold uppercase tracking-[0.16em] text-slate-400">{plan.audienceLabel}</div>
-                        <div className="mt-2 text-base font-black text-slate-950">{plan.label}</div>
-                        <div className="mt-1 text-sm font-bold text-medace-700">{plan.priceLabel}</div>
-                        <div className="mt-2 text-sm leading-relaxed text-slate-500">{plan.pricingNote}</div>
-                      </div>
-                    ))}
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowPublicInfo(true)}
+                    className="mt-4 inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 transition-colors hover:bg-slate-100"
+                  >
+                    アプリの説明・料金を見る <ArrowRight className="h-4 w-4" />
+                  </button>
                 </div>
               </div>
             </div>
