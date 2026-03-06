@@ -59,6 +59,7 @@ const getTriggerReason = (student: StudentSummary): string => {
 const InstructorDashboard: React.FC<InstructorDashboardProps> = ({ user }) => {
   const [students, setStudents] = useState<StudentSummary[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<'ALL' | 'DANGER'>('ALL');
   const [query, setQuery] = useState('');
   const [selectedStudent, setSelectedStudent] = useState<StudentSummary | null>(null);
@@ -71,9 +72,16 @@ const InstructorDashboard: React.FC<InstructorDashboardProps> = ({ user }) => {
 
   const fetchData = async () => {
     setLoading(true);
-    const data = await storage.getAllStudentsProgress();
-    setStudents(data);
-    setLoading(false);
+    setError(null);
+    try {
+      const data = await storage.getAllStudentsProgress();
+      setStudents(data);
+    } catch (loadError) {
+      console.error(loadError);
+      setError((loadError as Error).message || '生徒データの取得に失敗しました。');
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -127,6 +135,9 @@ const InstructorDashboard: React.FC<InstructorDashboardProps> = ({ user }) => {
         setMessageDraft(buildFallbackMessage(selectedStudent, user.displayName));
         setUsedAi(false);
       }
+    } catch (draftError) {
+      console.error(draftError);
+      setNotice((draftError as Error).message || 'AI下書きの生成に失敗しました。');
     } finally {
       setDrafting(false);
     }
@@ -145,6 +156,9 @@ const InstructorDashboard: React.FC<InstructorDashboardProps> = ({ user }) => {
       setNotice(`${selectedStudent.name}さんへ講師名入りのフォロー通知を保存しました。`);
       closeComposer();
       await fetchData();
+    } catch (sendError) {
+      console.error(sendError);
+      setNotice((sendError as Error).message || 'フォロー通知の保存に失敗しました。');
     } finally {
       setSending(false);
     }
@@ -153,6 +167,17 @@ const InstructorDashboard: React.FC<InstructorDashboardProps> = ({ user }) => {
   if (loading) {
     return <div className="p-10 text-center text-slate-500">生徒データを分析中...</div>;
   }
+
+  if (error) {
+    return (
+      <div className="rounded-[28px] border border-red-200 bg-red-50 px-6 py-5 text-sm text-red-700">
+        {error}
+      </div>
+    );
+  }
+
+  const planMissingCount = students.filter((student) => !student.hasLearningPlan).length;
+  const unassignedVisibleCount = students.filter((student) => !student.assignedInstructorUid).length;
 
   return (
     <div className="space-y-8 animate-in fade-in pb-12">
@@ -183,6 +208,21 @@ const InstructorDashboard: React.FC<InstructorDashboardProps> = ({ user }) => {
                   </span>
                 )}
               </div>
+              {selectedStudent.riskReasons && selectedStudent.riskReasons.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {selectedStudent.riskReasons.map((reason) => (
+                    <span key={reason} className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-600">
+                      {reason}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {selectedStudent.recommendedAction && (
+                <div className="rounded-2xl border border-medace-100 bg-white px-4 py-3 text-sm text-slate-700">
+                  <div className="text-xs font-bold uppercase tracking-[0.16em] text-medace-600">おすすめの次の一手</div>
+                  <div className="mt-2 leading-relaxed">{selectedStudent.recommendedAction}</div>
+                </div>
+              )}
               <div>
                 <label className="block text-xs font-bold uppercase text-slate-500 mb-2">AIへの補足</label>
                 <input
@@ -278,12 +318,13 @@ const InstructorDashboard: React.FC<InstructorDashboardProps> = ({ user }) => {
           </div>
           <h2 className="mt-3 text-3xl font-black tracking-tight">担当生徒の再開導線を、文面まで整える</h2>
           <p className="mt-4 text-sm leading-relaxed text-white/72">
-            グループ内の生徒を見ながら、離脱リスク判定だけではなく、講師名義の通知文まで下書きして、そのまま送るか調整して送るかを選べます。
+            グループ内の担当生徒と未割当生徒を見ながら、離脱リスクの理由を確認し、講師名義の通知文まで下書きして、そのまま送るか調整して送るかを選べます。
           </p>
 
           <div className="mt-8 grid gap-3">
             {[
               '離脱リスクの高い生徒から優先的に表示',
+              '担当割当済みの生徒と未割当生徒だけを一覧化',
               '講師名で違和感のない日本語メッセージを作成',
               '送信後は生徒ダッシュボードにフォロー通知として表示',
             ].map((item) => (
@@ -294,7 +335,7 @@ const InstructorDashboard: React.FC<InstructorDashboardProps> = ({ user }) => {
           </div>
         </div>
 
-        <div className="grid gap-4 sm:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <div className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
             <div className="flex items-center gap-3 text-slate-500">
               <Users className="w-5 h-5 text-medace-500" />
@@ -308,6 +349,14 @@ const InstructorDashboard: React.FC<InstructorDashboardProps> = ({ user }) => {
               <span className="text-sm font-bold">高リスク</span>
             </div>
             <div className="mt-4 text-4xl font-black tracking-tight text-red-600">{atRiskCount}</div>
+          </div>
+          <div className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="flex items-center gap-3 text-slate-500">
+              <CheckCircle2 className="w-5 h-5 text-amber-500" />
+              <span className="text-sm font-bold">プラン未設定</span>
+            </div>
+            <div className="mt-4 text-4xl font-black tracking-tight text-slate-950">{planMissingCount}</div>
+            <div className="mt-2 text-sm text-slate-500">未割当表示 {unassignedVisibleCount} 名</div>
           </div>
           <div className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
             <div className="flex items-center gap-3 text-slate-500">
@@ -358,11 +407,12 @@ const InstructorDashboard: React.FC<InstructorDashboardProps> = ({ user }) => {
       </div>
 
       <div className="overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-sm">
-        <div className="grid grid-cols-[0.8fr_1.2fr_0.72fr_0.9fr_1.1fr_0.9fr] gap-4 border-b border-slate-200 bg-slate-50 px-6 py-4 text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">
+        <div className="grid grid-cols-[0.72fr_1.1fr_0.72fr_0.86fr_1.08fr_1fr_0.84fr] gap-4 border-b border-slate-200 bg-slate-50 px-6 py-4 text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">
           <div>リスク</div>
           <div>生徒</div>
           <div>プラン</div>
           <div>学習状況</div>
+          <div>介入理由</div>
           <div>最新フォロー</div>
           <div className="text-right">操作</div>
         </div>
@@ -375,7 +425,7 @@ const InstructorDashboard: React.FC<InstructorDashboardProps> = ({ user }) => {
               ? Math.floor((Date.now() - student.lastActive) / (1000 * 60 * 60 * 24))
               : null;
             return (
-              <div key={student.uid} className="grid grid-cols-[0.8fr_1.2fr_0.72fr_0.9fr_1.1fr_0.9fr] gap-4 border-b border-slate-100 px-6 py-5 text-sm last:border-b-0">
+              <div key={student.uid} className="grid grid-cols-[0.72fr_1.1fr_0.72fr_0.86fr_1.08fr_1fr_0.84fr] gap-4 border-b border-slate-100 px-6 py-5 text-sm last:border-b-0">
                 <div>
                   <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-bold ${getRiskStyle(student.riskLevel)}`}>
                     {getRiskLabel(student.riskLevel)}
@@ -385,17 +435,38 @@ const InstructorDashboard: React.FC<InstructorDashboardProps> = ({ user }) => {
                   <div className="font-bold text-slate-900">{student.name}</div>
                   <div className="mt-1 text-xs text-slate-400">{student.email}</div>
                   {student.organizationName && <div className="mt-1 text-xs text-slate-400">{student.organizationName}</div>}
+                  <div className="mt-1 text-xs text-slate-400">
+                    担当: {student.assignedInstructorName || '未割当'}
+                  </div>
                 </div>
                 <div>
                   <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-bold ${getPlanStyle(student.subscriptionPlan)}`}>
                     {student.subscriptionPlan ? SUBSCRIPTION_PLAN_LABELS[student.subscriptionPlan] : '未設定'}
                   </span>
+                  <div className="mt-2 text-xs text-slate-400">
+                    {student.hasLearningPlan ? '学習プラン設定済み' : '学習プラン未設定'}
+                  </div>
                 </div>
                 <div>
                   <div className="font-bold text-medace-600">{student.totalLearned} 語</div>
                   <div className="mt-1 text-xs text-slate-400">
                     {daysSinceActive === null ? '未学習' : `${daysSinceActive}日ぶり`}
                   </div>
+                  <div className="mt-2 text-xs text-slate-400">正答率 {Math.round((student.accuracy || 0) * 100)}%</div>
+                </div>
+                <div>
+                  <div className="flex flex-wrap gap-2">
+                    {(student.riskReasons || []).map((reason) => (
+                      <span key={reason} className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-medium text-slate-600">
+                        {reason}
+                      </span>
+                    ))}
+                  </div>
+                  {student.recommendedAction && (
+                    <div className="mt-3 rounded-2xl border border-medace-100 bg-medace-50/60 px-3 py-3 text-xs leading-relaxed text-medace-900">
+                      次アクション: {student.recommendedAction}
+                    </div>
+                  )}
                 </div>
                 <div>
                   {student.lastNotificationAt ? (

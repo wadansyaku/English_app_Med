@@ -1,5 +1,5 @@
 {
-  "name": "MedAce Study Space Pro",
-  "description": "AIによる文脈生成、分散学習トラッキング、包括的な生徒分析機能を備えた、先進的な英単語学習プラットフォーム。",
+  "name": "Steady Study",
+  "description": "塾・教室向け運用SaaSを主軸に、講師フォロー、教材権限、個別学習プランまで扱う英単語学習プラットフォーム。",
   "requestFramePermissions": []
 }

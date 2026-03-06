@@ -1,0 +1,45 @@
+name: Cloudflare Doctor
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+      - 'codex/**'
+    paths:
+      - '.github/workflows/cloudflare-doctor.yml'
+      - '.github/workflows/deploy-pages.yml'
+      - '.github/workflows/deploy-pages-preview.yml'
+      - 'scripts/cf-doctor.mjs'
+      - 'package.json'
+      - 'wrangler.jsonc'
+
+jobs:
+  doctor:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_PAGES_PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT || 'medace-english-app' }}
+      CLOUDFLARE_D1_DATABASE: ${{ vars.CLOUDFLARE_D1_DATABASE || 'medace-db' }}
+    permissions:
+      actions: read
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run Cloudflare / GitHub doctor
+        run: npm run cf:doctor

@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { storage } from '../services/storage';
 import { extractVocabularyFromText } from '../services/gemini';
-import { AdminDashboardSnapshot, StudentRiskLevel, SUBSCRIPTION_PLAN_LABELS, SubscriptionPlan } from '../types';
+import { AdminDashboardSnapshot, BookAccessScope, BookCatalogSource, BOOK_CATALOG_SOURCE_LABELS, StudentRiskLevel, SUBSCRIPTION_PLAN_LABELS, SubscriptionPlan } from '../types';
 import { BRAND } from '../config/brand';
 import { Activity, AlertTriangle, BarChart3, BellRing, BookOpen, Bot, Clock3, Database, FileText, Loader2, MessageSquareText, RefreshCw, ShieldAlert, Sparkles, Target, Trash2, Upload, Users } from 'lucide-react';
 
@@ -66,6 +66,7 @@ const AdminPanel: React.FC = () => {
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [log, setLog] = useState<string[]>([]);
+  const [catalogSource, setCatalogSource] = useState<BookCatalogSource>(BookCatalogSource.LICENSED_PARTNER);
 
   const fetchDashboard = async () => {
     setDashboardLoading(true);
@@ -181,6 +182,9 @@ const AdminPanel: React.FC = () => {
 
         await storage.batchImportWords(defaultBookName, rows, (nextProgress) => {
           setProgress(nextProgress);
+        }, undefined, undefined, {
+          catalogSource,
+          accessScope: BookAccessScope.BUSINESS_ONLY,
         });
 
         setLog((previous) => [...previous, 'インポート完了。ダッシュボードを更新しています...']);
@@ -217,6 +221,9 @@ const AdminPanel: React.FC = () => {
       setLog((previous) => [...previous, 'データベースへ保存中...']);
       await storage.batchImportWords(contentTitle, rows, (nextProgress) => {
         setProgress(nextProgress);
+      }, undefined, extracted.contextSummary, {
+        catalogSource,
+        accessScope: BookAccessScope.BUSINESS_ONLY,
       });
 
       setLog((previous) => [...previous, '完了: 独自教材を追加しました。ダッシュボードを更新しています...']);
@@ -264,7 +271,7 @@ const AdminPanel: React.FC = () => {
       <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
         <div>
           <h2 className="text-3xl font-bold text-medace-900">教材運用</h2>
-          <p className="text-medace-700/70">教材追加とデータ投入をこの画面から管理します。</p>
+          <p className="text-medace-700/70">教材追加と、ビジネス限定の公式カタログ運用をこの画面から管理します。</p>
         </div>
         <div className="inline-flex rounded-2xl border border-medace-100 bg-medace-50 p-1">
           <button
@@ -283,6 +290,29 @@ const AdminPanel: React.FC = () => {
       </div>
 
       <div className="rounded-[28px] border border-medace-100 bg-white p-8 shadow-[0_18px_50px_rgba(246,109,11,0.08)]">
+        <div className="mb-6 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+          <div className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">Catalog Scope</div>
+          <div className="mt-3 grid gap-3 md:grid-cols-2">
+            {[BookCatalogSource.STEADY_STUDY_ORIGINAL, BookCatalogSource.LICENSED_PARTNER].map((source) => (
+              <button
+                key={source}
+                type="button"
+                onClick={() => setCatalogSource(source)}
+                className={`rounded-2xl border px-4 py-4 text-left transition-colors ${catalogSource === source ? 'border-medace-500 bg-medace-50 text-medace-900' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}
+              >
+                <div className="font-bold">{BOOK_CATALOG_SOURCE_LABELS[source]}</div>
+                <div className="mt-1 text-sm">
+                  {source === BookCatalogSource.STEADY_STUDY_ORIGINAL
+                    ? 'Steady Study原本として、ビジネス限定の公式教材カタログへ登録します。'
+                    : 'ライセンス取得済み教材として、ビジネス限定の公式教材カタログへ登録します。'}
+                </div>
+              </button>
+            ))}
+          </div>
+          <p className="mt-3 text-sm text-slate-500">
+            現在の方針では、ここで登録した公式教材は個人/無料ユーザーには表示されません。
+          </p>
+        </div>
         {mode === 'ai' ? (
           <div className="space-y-6 animate-in fade-in">
             <div className="flex items-start gap-3 rounded-xl border border-medace-100 bg-medace-50 p-4">

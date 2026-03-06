@@ -1,16 +1,15 @@
 import React from 'react';
-import { ActivityLog, LearningPlan, MasteryDistribution, UserProfile } from '../types';
+import { UserProfile } from '../types';
 import { Flame, Gift, Shield, Sparkles, Star, Target, Zap } from 'lucide-react';
 
 interface StudyCompanionProps {
   user: UserProfile;
   dueCount: number;
-  learnedWords: number;
-  totalTrackedWords: number;
-  coverageRate: number;
-  learningPlan: LearningPlan | null;
-  activityLogs: ActivityLog[];
-  masteryDist: MasteryDistribution | null;
+  todayCount: number;
+  weekTotal: number;
+  dailyGoal: number;
+  weeklyGoal: number;
+  stabilizedWords: number;
   onStartQuest: () => void;
 }
 
@@ -78,8 +77,6 @@ const COMPANION_STAGES: CompanionStage[] = [
 ];
 
 const clampPercent = (value: number) => Math.max(0, Math.min(100, Math.round(value)));
-
-const getTodayKey = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Tokyo' }).format(new Date());
 
 const getNextMilestone = (value: number, milestones: number[]) => {
   const next = milestones.find((milestone) => milestone > value);
@@ -183,21 +180,18 @@ const CompanionIllustration: React.FC<{ stageIndex: number; mood: 'happy' | 'cal
 const StudyCompanion: React.FC<StudyCompanionProps> = ({
   user,
   dueCount,
-  learnedWords,
-  totalTrackedWords,
-  coverageRate,
-  learningPlan,
-  activityLogs,
-  masteryDist,
+  todayCount,
+  weekTotal,
+  dailyGoal,
+  weeklyGoal,
+  stabilizedWords,
   onStartQuest,
 }) => {
   const currentStreak = user.stats?.currentStreak ?? 0;
   const level = user.stats?.level ?? 1;
   const xp = user.stats?.xp ?? 0;
-  const dailyGoal = learningPlan?.dailyWordGoal ?? 15;
-  const todayCount = activityLogs.find((log) => log.date === getTodayKey())?.count ?? 0;
-  const stabilizedWords = (masteryDist?.graduated ?? 0) + (masteryDist?.review ?? 0);
-  const growthScore = learnedWords + level * 24 + currentStreak * 18 + stabilizedWords * 2 + Math.round(coverageRate * 1.5);
+  const weeklyProgressPercent = clampPercent((weekTotal / Math.max(weeklyGoal, 1)) * 100);
+  const growthScore = weekTotal * 4 + level * 24 + currentStreak * 18 + stabilizedWords * 2 + Math.round(weeklyProgressPercent * 0.8);
   const currentStageIndex = Math.max(
     0,
     COMPANION_STAGES.reduce((best, stage, index) => (growthScore >= stage.unlockScore ? index : best), 0),
@@ -213,10 +207,10 @@ const StudyCompanion: React.FC<StudyCompanionProps> = ({
     : Math.max(nextStage.unlockScore - growthScore, 0);
   const mood = getCompanionMood(dueCount, currentStreak, todayCount);
   const streakMilestone = getNextMilestone(currentStreak, [3, 7, 14, 21, 30]);
-  const coverageMilestone = coverageRate >= 100 ? 100 : getNextMilestone(coverageRate, [15, 30, 45, 60, 75, 90, 100]);
   const reviewGoal = dueCount > 0 ? Math.min(Math.max(6, Math.ceil(dailyGoal * 0.7)), dueCount) : 1;
   const stampCount = 7;
-  const bondPercent = clampPercent(currentStreak * 8 + Math.min(todayCount, dailyGoal) * 3 + Math.round(coverageRate * 0.35));
+  const bondPercent = clampPercent(currentStreak * 8 + Math.min(todayCount, dailyGoal) * 3 + Math.round(weeklyProgressPercent * 0.35));
+  const weeklyRemaining = Math.max(weeklyGoal - weekTotal, 0);
 
   const missions: MissionCard[] = [
     {
@@ -250,12 +244,12 @@ const StudyCompanion: React.FC<StudyCompanionProps> = ({
       toneClass: 'border-orange-100 bg-orange-50 text-orange-900',
     },
     {
-      id: 'coverage',
-      title: '育成メーター拡張',
-      detail: `着手率を${coverageMilestone}%まで広げる`,
-      progress: Math.min(coverageRate, coverageMilestone),
-      target: coverageMilestone,
-      reward: 'ルーモの新アクセント',
+      id: 'weekly-pace',
+      title: '今週のペースメイク',
+      detail: `今週は${weeklyGoal}語まで進める`,
+      progress: Math.min(weekTotal, weeklyGoal),
+      target: weeklyGoal,
+      reward: weeklyRemaining === 0 ? '今週クリア' : 'ペース維持ボーナス',
       icon: <Star className="h-4 w-4" />,
       toneClass: 'border-slate-200 bg-white text-slate-800',
     },
@@ -404,9 +398,9 @@ const StudyCompanion: React.FC<StudyCompanionProps> = ({
                 </div>
                 <div className="mt-3 grid gap-3 sm:grid-cols-3 xl:grid-cols-1 2xl:grid-cols-3">
                   <div className="rounded-2xl bg-slate-50 px-4 py-4">
-                    <div className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">着手語数</div>
-                    <div className="mt-2 text-xl font-black text-slate-950">{learnedWords}</div>
-                    <div className="mt-1 text-xs text-slate-500">/ {totalTrackedWords || 0} 語</div>
+                    <div className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">今日の達成</div>
+                    <div className="mt-2 text-xl font-black text-slate-950">{todayCount}</div>
+                    <div className="mt-1 text-xs text-slate-500">/ {dailyGoal} 語</div>
                   </div>
                   <div className="rounded-2xl bg-slate-50 px-4 py-4">
                     <div className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">定着ゾーン</div>
@@ -414,9 +408,9 @@ const StudyCompanion: React.FC<StudyCompanionProps> = ({
                     <div className="mt-1 text-xs text-slate-500">復習期 + 定着済</div>
                   </div>
                   <div className="rounded-2xl bg-slate-50 px-4 py-4">
-                    <div className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">育成率</div>
-                    <div className="mt-2 text-xl font-black text-slate-950">{coverageRate}%</div>
-                    <div className="mt-1 text-xs text-slate-500">次は {coverageMilestone}%</div>
+                    <div className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">今週の学習</div>
+                    <div className="mt-2 text-xl font-black text-slate-950">{weekTotal}</div>
+                    <div className="mt-1 text-xs text-slate-500">/ {weeklyGoal} 語</div>
                   </div>
                 </div>
               </div>

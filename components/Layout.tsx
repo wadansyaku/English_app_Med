@@ -1,7 +1,7 @@
 
 import React from 'react';
 import { BookOpen, LogOut, Zap, Star, Trophy } from 'lucide-react';
-import { UserRole, UserProfile } from '../types';
+import { UserRole, UserProfile, UserStudyMode } from '../types';
 import { BRAND } from '../config/brand';
 import { getHomeViewForUser, getWorkspaceNavLabel, getWorkspaceRoleLabel } from '../config/access';
 
@@ -21,6 +21,7 @@ const Layout: React.FC<LayoutProps> = ({ children, user, onLogout, currentView, 
   const homeView = getHomeViewForUser(user);
   const navLabel = getWorkspaceNavLabel(user);
   const workspaceLabel = getWorkspaceRoleLabel(user);
+  const isGameMode = (user?.studyMode || UserStudyMode.FOCUS) === UserStudyMode.GAME;
 
   return (
     <div className="min-h-screen bg-medace-50/40 flex flex-col font-sans">
@@ -41,7 +42,7 @@ const Layout: React.FC<LayoutProps> = ({ children, user, onLogout, currentView, 
             <div className="flex items-center gap-4 flex-1 justify-end">
               
               {/* Gamification HUD */}
-              {user.role === UserRole.STUDENT && (
+              {user.role === UserRole.STUDENT && isGameMode && (
                   <div className="flex items-center gap-3 md:gap-6 bg-white/90 px-4 py-2 rounded-full border border-medace-100 mr-2 shadow-sm">
                       {/* Streak */}
                       <div className="flex items-center gap-1.5" title={`${stats.currentStreak}日連続学習中！`}>

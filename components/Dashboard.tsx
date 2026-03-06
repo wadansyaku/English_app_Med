@@ -1,6 +1,6 @@
 
 import React, { useEffect, useState } from 'react';
-import { AccountOverview, BookMetadata, BookProgress, UserProfile, UserGrade, EnglishLevel, LearningPlan, LeaderboardEntry, MasteryDistribution, ActivityLog, InstructorNotification, STATUS_LABELS, GRADE_LABELS, SUBSCRIPTION_PLAN_LABELS, SubscriptionPlan } from '../types';
+import { AccountOverview, BOOK_CATALOG_SOURCE_LABELS, BookCatalogSource, BookMetadata, BookProgress, UserProfile, UserGrade, EnglishLevel, LearningPlan, LearningPreference, LearningPreferenceIntensity, LEARNING_PREFERENCE_INTENSITY_LABELS, LeaderboardEntry, MasteryDistribution, ActivityLog, InstructorNotification, STATUS_LABELS, GRADE_LABELS, SUBSCRIPTION_PLAN_LABELS, SubscriptionPlan, UserStudyMode, USER_STUDY_MODE_LABELS } from '../types';
 import { storage } from '../services/storage';
 import { extractVocabularyFromText, extractVocabularyFromMedia, generateLearningPlan } from '../services/gemini';
 import { BRAND } from '../config/brand';
@@ -25,6 +25,8 @@ interface BookCardProps {
 }
 
 const BookCard: React.FC<BookCardProps> = ({ book, isMine, progress, onDelete, onSelect }) => {
+  const catalogLabel = book.catalogSource ? BOOK_CATALOG_SOURCE_LABELS[book.catalogSource] : null;
+  const isLicensed = book.catalogSource === BookCatalogSource.LICENSED_PARTNER;
   return (
       <div className="group bg-white rounded-xl border border-slate-200 shadow-sm hover:shadow-lg hover:-translate-y-1 transition-all duration-300 overflow-hidden flex flex-col relative h-full">
           <div className="p-6 flex-grow relative z-10">
@@ -55,10 +57,17 @@ const BookCard: React.FC<BookCardProps> = ({ book, isMine, progress, onDelete, o
               </div>
               
               <h3 className="text-xl font-bold text-slate-800 mb-1 group-hover:text-medace-600 transition-colors truncate" title={book.title}>{book.title}</h3>
+              {catalogLabel && !isMine && (
+                <div className="mb-2 flex flex-wrap gap-2">
+                  <span className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${isLicensed ? 'bg-slate-900 text-white' : 'bg-medace-50 text-medace-700 border border-medace-100'}`}>
+                    {catalogLabel}
+                  </span>
+                </div>
+              )}
               <p className="text-sm text-slate-500 mb-5 line-clamp-2 h-10">
                  {isMine 
                     ? (book.sourceContext ? `AI分析: ${book.sourceContext}` : 'オリジナル単語帳') 
-                    : (book.description || "学習セット")}
+                    : (book.description || (isLicensed ? 'ビジネス版向けのライセンス教材' : 'ビジネス版向けの公式教材'))}
               </p>
 
               <div className="space-y-2">
@@ -202,6 +211,8 @@ const getLeague = (level: number) => {
     return { name: 'ブロンズ', icon: <Medal className="w-3 h-3 fill-orange-300 text-orange-600" />, color: 'bg-orange-50 text-orange-800 border-orange-200' };
 };
 
+const getTodayKey = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Tokyo' }).format(new Date());
+
 
 const Dashboard: React.FC<DashboardProps> = ({ user, onSelectBook }) => {
   const [books, setBooks] = useState<BookMetadata[]>([]);
@@ -218,9 +229,12 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onSelectBook }) => {
   const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([]);
   const [coachNotifications, setCoachNotifications] = useState<InstructorNotification[]>([]);
   const [accountOverview, setAccountOverview] = useState<AccountOverview | null>(null);
+  const [learningPreference, setLearningPreference] = useState<LearningPreference | null>(null);
 
   // Toggle State for Library
   const [showLibrary, setShowLibrary] = useState(false);
+  const [showProgressDetails, setShowProgressDetails] = useState(false);
+  const [showAccountDetails, setShowAccountDetails] = useState(false);
 
   // Modals
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -243,6 +257,15 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onSelectBook }) => {
   // Profile Edit State
   const [editName, setEditName] = useState(user.displayName);
   const [editGrade, setEditGrade] = useState(user.grade || UserGrade.ADULT);
+  const [editStudyMode, setEditStudyMode] = useState(user.studyMode || UserStudyMode.FOCUS);
+  const [editTargetExam, setEditTargetExam] = useState('');
+  const [editTargetScore, setEditTargetScore] = useState('');
+  const [editExamDate, setEditExamDate] = useState('');
+  const [editWeeklyStudyDays, setEditWeeklyStudyDays] = useState(4);
+  const [editDailyStudyMinutes, setEditDailyStudyMinutes] = useState(20);
+  const [editWeakSkillFocus, setEditWeakSkillFocus] = useState('');
+  const [editMotivationNote, setEditMotivationNote] = useState('');
+  const [editIntensity, setEditIntensity] = useState<LearningPreferenceIntensity>(LearningPreferenceIntensity.BALANCED);
   const [isSavingProfile, setIsSavingProfile] = useState(false);
 
   useEffect(() => {
@@ -257,6 +280,21 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onSelectBook }) => {
       setSelectedPlanBooks(learningPlan.selectedBookIds);
     }
   }, [learningPlan, showPlanEditModal]);
+
+  useEffect(() => {
+    if (!showSettingsModal) return;
+    setEditName(user.displayName);
+    setEditGrade(user.grade || UserGrade.ADULT);
+    setEditStudyMode(user.studyMode || UserStudyMode.FOCUS);
+    setEditTargetExam(learningPreference?.targetExam || '');
+    setEditTargetScore(learningPreference?.targetScore || '');
+    setEditExamDate(learningPreference?.examDate || '');
+    setEditWeeklyStudyDays(learningPreference?.weeklyStudyDays || 4);
+    setEditDailyStudyMinutes(learningPreference?.dailyStudyMinutes || 20);
+    setEditWeakSkillFocus(learningPreference?.weakSkillFocus || '');
+    setEditMotivationNote(learningPreference?.motivationNote || '');
+    setEditIntensity(learningPreference?.intensity || LearningPreferenceIntensity.BALANCED);
+  }, [showSettingsModal, user.displayName, user.grade, user.studyMode, learningPreference]);
 
   if (showOnboarding) {
       return <Onboarding 
@@ -285,6 +323,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onSelectBook }) => {
         setActivityLogs(snapshot.activityLogs);
         setCoachNotifications(snapshot.coachNotifications);
         setAccountOverview(snapshot.accountOverview);
+        setLearningPreference(snapshot.learningPreference);
       } catch (error) {
         console.error("Failed to load dashboard data", error);
       } finally {
@@ -295,7 +334,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onSelectBook }) => {
   const handleGeneratePlan = async () => {
       setGeneratingPlan(true);
       try {
-          const plan = await generateLearningPlan(user.grade || UserGrade.ADULT, user.englishLevel || EnglishLevel.B1, books);
+          const plan = await generateLearningPlan(user.grade || UserGrade.ADULT, user.englishLevel || EnglishLevel.B1, books, learningPreference);
           if (plan) {
               plan.uid = user.uid;
               await storage.saveLearningPlan(plan);
@@ -416,8 +455,27 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onSelectBook }) => {
   const handleSaveProfile = async () => {
       setIsSavingProfile(true);
       try {
-          const updatedUser = { ...user, displayName: editName, grade: editGrade };
+          const updatedUser = {
+            ...user,
+            displayName: editName.trim() || user.displayName,
+            grade: editGrade,
+            studyMode: editStudyMode,
+          };
+          const nextPreference: LearningPreference = {
+            userUid: user.uid,
+            targetExam: editTargetExam.trim(),
+            targetScore: editTargetScore.trim(),
+            examDate: editExamDate || '',
+            weeklyStudyDays: editWeeklyStudyDays,
+            dailyStudyMinutes: editDailyStudyMinutes,
+            weakSkillFocus: editWeakSkillFocus.trim(),
+            motivationNote: editMotivationNote.trim(),
+            intensity: editIntensity,
+            updatedAt: Date.now(),
+          };
+          await storage.saveLearningPreference(nextPreference);
           await storage.updateSessionUser(updatedUser);
+          setLearningPreference(nextPreference);
           alert("プロフィールを更新しました。");
           setShowSettingsModal(false);
           window.location.reload();
@@ -431,34 +489,29 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onSelectBook }) => {
   const plannedBooks = learningPlan && learningPlan.selectedBookIds.length > 0
     ? books.filter((book) => learningPlan.selectedBookIds.includes(book.id))
     : books.filter((book) => book.isPriority).slice(0, 3);
-  const progressEntries = Object.values(progressMap) as BookProgress[];
-  const totalTrackedWords = progressEntries.reduce((sum, progress) => sum + progress.totalCount, 0);
-  const learnedWords = progressEntries.reduce((sum, progress) => sum + progress.learnedCount, 0);
-  const coverageRate = totalTrackedWords > 0 ? Math.round((learnedWords / totalTrackedWords) * 100) : 0;
+  const studyMode = user.studyMode || UserStudyMode.FOCUS;
+  const isGameMode = studyMode === UserStudyMode.GAME;
+  const todayKey = getTodayKey();
+  const todayCount = activityLogs.find((log) => log.date === todayKey)?.count ?? 0;
+  const weekTotal = activityLogs.reduce((sum, log) => sum + log.count, 0);
+  const stabilizedWords = (masteryDist?.graduated ?? 0) + (masteryDist?.review ?? 0);
   const userLeague = getLeague(user.stats?.level || 1);
-  const headline = dueCount > 0
-    ? `${dueCount}語が復習待ちです`
-    : learningPlan
-      ? '今日の学習導線は整っています'
-      : 'まずは学習プランを決めましょう';
-  const heroCopy = dueCount > 0
-    ? '復習が積み上がる前に、今日のクエストで流れを戻すのが最短です。'
-    : learningPlan
-      ? '診断結果と現在の進捗から、次に触るべき教材だけを前に出しています。'
-      : '診断結果は決まっているので、ここでは毎日の単語数と対象教材だけ決めれば始められます。';
+  const todayWordGoal = learningPlan?.dailyWordGoal ?? Math.min(Math.max(dueCount, 10), 20);
+  const weeklyGoal = todayWordGoal * 7;
+  const weeklyRemaining = Math.max(weeklyGoal - weekTotal, 0);
+  const remainingWords = Math.max(todayWordGoal - todayCount, 0);
+  const reviewFirstCount = dueCount > 0 ? Math.min(dueCount, Math.max(remainingWords, Math.min(todayWordGoal, 8))) : 0;
+  const estimatedMinutes = Math.max(3, Math.ceil((remainingWords > 0 ? remainingWords : Math.max(6, Math.min(todayWordGoal, 10))) / 4));
+  const todayProgressPercent = todayWordGoal > 0 ? Math.min(100, Math.round((todayCount / todayWordGoal) * 100)) : 0;
+  const heroTitle = remainingWords > 0 ? `あと${remainingWords}語で今日の目標です` : '今日はここまでで十分です';
+  const heroCopy = remainingWords > 0
+    ? dueCount > 0
+      ? `まずは復習待ちの ${reviewFirstCount} 語から始めれば、そのまま今日のノルマに入れます。`
+      : '今日は短く区切って進めれば十分です。まずはクエストを1回だけ始めましょう。'
+    : '余力があればテストかMy単語帳に進み、無理ならここで終えても流れは崩れません。';
+  const questButtonLabel = remainingWords > 0 ? '今日のクエストを開始' : '復習をもう1セットやる';
   const currentPlan = accountOverview?.subscriptionPlan || user.subscriptionPlan || SubscriptionPlan.TOC_FREE;
   const showAdSlots = isAdSupportedPlan(currentPlan);
-  const isBusinessWorkspace = isBusinessPlan(currentPlan) && !!user.organizationName;
-  const workspaceHeadline = isBusinessWorkspace
-    ? `${user.organizationName} の学習スペース`
-    : showAdSlots
-      ? '広告付きのセルフサーブ学習'
-      : '広告なしで広げる個人学習';
-  const workspaceCopy = isBusinessWorkspace
-    ? '講師フォローとグループ教材が乗る導線です。個人学習ではなく、組織運用の流れに合わせて学習できます。'
-    : showAdSlots
-      ? 'フリープランではGoogle AdSenseを表示しつつ、基本学習を無料で継続できる構成にしています。'
-      : '上位プランでは広告を外し、教材化やAI支援の幅を広げて集中しやすくしています。';
   const aiBudgetPercent = accountOverview
     ? Math.min(100, Math.round((accountOverview.aiUsage.estimatedCostMilliYen / Math.max(accountOverview.aiUsage.budgetMilliYen, 1)) * 100))
     : 0;
@@ -468,6 +521,16 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onSelectBook }) => {
     : aiBudgetPercent >= 55
       ? '今月のAIサポートは通常どおりご利用いただけます。'
       : '今月のAIサポートは十分な余裕があります。';
+  const preferenceSummaryParts = [
+    learningPreference?.targetExam ? `目標: ${learningPreference.targetExam}` : null,
+    learningPreference?.targetScore ? `目標点: ${learningPreference.targetScore}` : null,
+    learningPreference?.examDate ? `試験日: ${learningPreference.examDate}` : null,
+    learningPreference?.weakSkillFocus ? `重点: ${learningPreference.weakSkillFocus}` : null,
+  ].filter(Boolean);
+  const preferenceSummary = preferenceSummaryParts.length > 0
+    ? preferenceSummaryParts.join(' / ')
+    : '目標試験・学習時間・苦手分野を設定すると、プラン提案の精度が上がります。';
+  const canShowAccountDetails = Boolean(accountOverview || showAdSlots);
 
   if (loading && books.length === 0) {
     return (
@@ -551,6 +614,52 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onSelectBook }) => {
                             </select>
                         </div>
                         <div>
+                            <label className="block text-xs font-bold text-slate-500 mb-2">表示モード</label>
+                            <div className="grid grid-cols-2 gap-2">
+                                {[UserStudyMode.FOCUS, UserStudyMode.GAME].map((mode) => (
+                                    <button
+                                        key={mode}
+                                        type="button"
+                                        onClick={() => setEditStudyMode(mode)}
+                                        className={`rounded-xl border px-3 py-3 text-left transition-colors ${
+                                            editStudyMode === mode
+                                                ? 'border-medace-500 bg-medace-50 text-medace-900'
+                                                : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                                        }`}
+                                    >
+                                        <div className="text-sm font-bold">{USER_STUDY_MODE_LABELS[mode]}</div>
+                                        <div className="mt-1 text-xs leading-relaxed text-slate-500">
+                                            {mode === UserStudyMode.FOCUS
+                                                ? '相棒・ランキングを隠して、今日やること中心で表示します。'
+                                                : '相棒・ごほうび・ランキングを表示して達成感を強めます。'}
+                                        </div>
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                        <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                            <div className="text-xs font-bold uppercase tracking-[0.16em] text-slate-400">Personalization</div>
+                            <div className="mt-3 grid gap-3">
+                                <div className="grid grid-cols-2 gap-3">
+                                    <input type="text" value={editTargetExam} onChange={e => setEditTargetExam(e.target.value)} placeholder="目標試験 例: 英検2級" className="w-full border border-slate-300 p-2 rounded-lg bg-white text-slate-800" />
+                                    <input type="text" value={editTargetScore} onChange={e => setEditTargetScore(e.target.value)} placeholder="目標点 例: 80点" className="w-full border border-slate-300 p-2 rounded-lg bg-white text-slate-800" />
+                                </div>
+                                <input type="date" value={editExamDate} onChange={e => setEditExamDate(e.target.value)} className="w-full border border-slate-300 p-2 rounded-lg bg-white text-slate-800" />
+                                <div className="grid grid-cols-2 gap-3">
+                                    <input type="number" min="1" max="7" value={editWeeklyStudyDays} onChange={e => setEditWeeklyStudyDays(Math.max(1, Math.min(7, Number(e.target.value) || 1)))} placeholder="週の学習日数" className="w-full border border-slate-300 p-2 rounded-lg bg-white text-slate-800" />
+                                    <input type="number" min="5" max="180" value={editDailyStudyMinutes} onChange={e => setEditDailyStudyMinutes(Math.max(5, Math.min(180, Number(e.target.value) || 5)))} placeholder="1日の学習時間(分)" className="w-full border border-slate-300 p-2 rounded-lg bg-white text-slate-800" />
+                                </div>
+                                <input type="text" value={editWeakSkillFocus} onChange={e => setEditWeakSkillFocus(e.target.value)} placeholder="苦手分野 例: 長文、熟語、医療語彙" className="w-full border border-slate-300 p-2 rounded-lg bg-white text-slate-800" />
+                                <select value={editIntensity} onChange={e => setEditIntensity(e.target.value as LearningPreferenceIntensity)} className="w-full border border-slate-300 p-2 rounded-lg bg-white text-slate-800">
+                                    {Object.values(LearningPreferenceIntensity).map((intensity) => (
+                                        <option key={intensity} value={intensity}>{LEARNING_PREFERENCE_INTENSITY_LABELS[intensity]}</option>
+                                    ))}
+                                </select>
+                                <textarea value={editMotivationNote} onChange={e => setEditMotivationNote(e.target.value)} placeholder="講師に伝えたいこと、学習背景、通学時間など" className="w-full border border-slate-300 p-2 rounded-lg bg-white text-slate-800 h-20 resize-none" />
+                                <p className="text-xs leading-relaxed text-slate-500">ここで設定した条件をもとに、AI学習プランと今日の導線を調整します。</p>
+                            </div>
+                        </div>
+                        <div>
                             <label className="block text-xs font-bold text-slate-500 mb-1">現在のレベル</label>
                             <div className="flex items-center justify-between bg-slate-50 p-3 rounded-lg border border-slate-200">
                                 <span className="font-bold text-medace-600 text-lg">{user.englishLevel || '未診断'}</span>
@@ -565,6 +674,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onSelectBook }) => {
                                 <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
                                     <div className="font-bold text-slate-800">{SUBSCRIPTION_PLAN_LABELS[accountOverview.subscriptionPlan]}</div>
                                     <div className="mt-1 text-xs text-slate-500">{accountOverview.audienceLabel} / {accountOverview.priceLabel}</div>
+                                    <div className="mt-1 text-xs text-slate-500">{accountOverview.pricingNote}</div>
                                 </div>
                             </div>
                         )}
@@ -630,210 +740,179 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onSelectBook }) => {
             </div>
         )}
 
-      <div className="grid gap-6 xl:grid-cols-[1.08fr_0.92fr]">
-        <section className="relative overflow-hidden rounded-[32px] bg-[linear-gradient(135deg,#2F1609_0%,#66321A_42%,#F66D0B_100%)] p-7 md:p-8 text-white shadow-[0_24px_60px_rgba(228,94,4,0.18)]">
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,_rgba(255,191,82,0.34),_transparent_24%),radial-gradient(circle_at_bottom_left,_rgba(252,215,151,0.24),_transparent_22%)]"></div>
-          <div className="relative">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-white/70">
-                  {BRAND.productLabel}
-                </span>
-                {accountOverview && (
-                  <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-bold text-white/85">
-                    {SUBSCRIPTION_PLAN_LABELS[accountOverview.subscriptionPlan]}
-                  </span>
-                )}
+      <section className="relative overflow-hidden rounded-[32px] bg-[linear-gradient(135deg,#2F1609_0%,#66321A_42%,#F66D0B_100%)] p-7 md:p-8 text-white shadow-[0_24px_60px_rgba(228,94,4,0.18)]">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,_rgba(255,191,82,0.34),_transparent_24%),radial-gradient(circle_at_bottom_left,_rgba(252,215,151,0.24),_transparent_22%)]"></div>
+        <div className="relative">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-white/70">
+                {BRAND.productLabel}
+              </span>
+              <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-bold text-white/88">
+                {GRADE_LABELS[user.grade || UserGrade.ADULT]} / {user.englishLevel || '未診断'}
+              </span>
+              {isGameMode && (
                 <span className={`rounded-full border px-3 py-1 text-xs font-bold ${userLeague.color}`}>
                   {userLeague.name}
                 </span>
-              </div>
-              <button 
-                onClick={() => setShowSettingsModal(true)}
-                className="flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-bold text-white/80 transition-colors hover:bg-white/10"
-              >
-                <Settings className="w-4 h-4" /> 設定・プロフィール
-              </button>
-            </div>
-
-            <div className="mt-7 max-w-2xl">
-              <p className="text-sm font-bold uppercase tracking-[0.16em] text-medace-200">{GRADE_LABELS[user.grade || UserGrade.ADULT]} / {user.englishLevel || '未診断'}</p>
-              <h2 className="mt-3 text-3xl md:text-4xl font-black tracking-tight leading-tight">{headline}</h2>
-              <p className="mt-4 text-sm md:text-base leading-relaxed text-white/74">{heroCopy}</p>
-              <div className="mt-4 rounded-3xl border border-white/10 bg-white/5 px-4 py-4">
-                <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-white/55">Workspace</div>
-                <div className="mt-2 text-lg font-black text-white">{workspaceHeadline}</div>
-                <div className="mt-2 text-sm leading-relaxed text-white/72">{workspaceCopy}</div>
-              </div>
-            </div>
-
-            <div className="mt-8 flex flex-wrap gap-3">
-              <button 
-                onClick={() => onSelectBook('smart-session', 'study')}
-                className="inline-flex items-center gap-2 rounded-2xl bg-white px-5 py-3 text-sm font-bold text-medace-900 hover:bg-medace-50"
-              >
-                <Play className="w-4 h-4 fill-current" /> 今日のクエストを開始
-              </button>
-              {learningPlan ? (
-                <button
-                  onClick={() => setShowPlanEditModal(true)}
-                  className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-5 py-3 text-sm font-bold text-white/85 hover:bg-white/10"
-                >
-                  <Edit2 className="w-4 h-4" /> プランを調整
-                </button>
-              ) : (
-                <button
-                  onClick={handleGeneratePlan}
-                  disabled={generatingPlan}
-                  className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-5 py-3 text-sm font-bold text-white/85 hover:bg-white/10 disabled:opacity-50"
-                >
-                  {generatingPlan ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-                  AIでプランを作る
-                </button>
               )}
             </div>
+            <button
+              onClick={() => setShowSettingsModal(true)}
+              className="flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-bold text-white/80 transition-colors hover:bg-white/10"
+            >
+              <Settings className="w-4 h-4" /> 設定・プロフィール
+            </button>
+          </div>
 
-            <div className="mt-8 grid gap-3 md:grid-cols-3">
-              <div className="rounded-3xl border border-white/10 bg-white/5 px-5 py-5">
-                <div className="text-xs font-bold uppercase tracking-[0.18em] text-white/55">今日の復習</div>
-                <div className="mt-3 text-4xl font-black tracking-tight">{dueCount}</div>
-                <div className="mt-2 text-sm text-white/68">復習待ちの単語数</div>
+          <div className="mt-8 grid gap-6 lg:grid-cols-[1.1fr_0.9fr] lg:items-start">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-[0.2em] text-medace-200">Today Focus</p>
+              <h2 className="mt-3 text-3xl md:text-4xl font-black tracking-tight leading-tight">今日やることは 1 つだけ</h2>
+              <p className="mt-4 text-2xl font-black tracking-tight text-white">{heroTitle}</p>
+              <p className="mt-4 max-w-2xl text-sm md:text-base leading-relaxed text-white/74">{heroCopy}</p>
+              <div className="mt-4 rounded-2xl border border-white/10 bg-white/6 px-4 py-4">
+                <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-white/60">Personalization</div>
+                <div className="mt-2 text-sm leading-relaxed text-white/80">{preferenceSummary}</div>
               </div>
-              <div className="rounded-3xl border border-white/10 bg-white/5 px-5 py-5">
-                <div className="text-xs font-bold uppercase tracking-[0.18em] text-white/55">着手率</div>
-                <div className="mt-3 text-4xl font-black tracking-tight">{coverageRate}%</div>
-                <div className="mt-2 text-sm text-white/68">{learnedWords} / {totalTrackedWords} 語に着手</div>
+
+              <div className="mt-7 flex flex-wrap gap-3">
+                <button
+                  onClick={() => onSelectBook('smart-session', 'study')}
+                  className="inline-flex items-center gap-2 rounded-2xl bg-white px-5 py-3 text-sm font-bold text-medace-900 transition-colors hover:bg-medace-50"
+                >
+                  <Play className="w-4 h-4 fill-current" /> {questButtonLabel}
+                </button>
+                {learningPlan ? (
+                  <button
+                    onClick={() => setShowPlanEditModal(true)}
+                    className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-5 py-3 text-sm font-bold text-white/85 transition-colors hover:bg-white/10"
+                  >
+                    <Edit2 className="w-4 h-4" /> 今日のプランを見る
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleGeneratePlan}
+                    disabled={generatingPlan}
+                    className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-5 py-3 text-sm font-bold text-white/85 transition-colors hover:bg-white/10 disabled:opacity-50"
+                  >
+                    {generatingPlan ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                    最初のプランを作る
+                  </button>
+                )}
               </div>
-              <div className="rounded-3xl border border-white/10 bg-white/5 px-5 py-5">
-                <div className="text-xs font-bold uppercase tracking-[0.18em] text-white/55">AI利用枠</div>
-                <div className="mt-3 text-2xl font-black tracking-tight">{aiUsageLabel}</div>
-                <div className="mt-2 text-sm text-white/68">{aiUsageCopy}</div>
+            </div>
+
+            <div className="rounded-[28px] border border-white/10 bg-white/8 p-5 backdrop-blur-sm">
+              <div className="text-xs font-bold uppercase tracking-[0.18em] text-white/60">今日の目安</div>
+              <div className="mt-4 grid gap-3 sm:grid-cols-3 lg:grid-cols-1">
+                <div className="rounded-2xl border border-white/10 bg-white/6 px-4 py-4">
+                  <div className="text-xs font-bold uppercase tracking-[0.16em] text-white/55">残り</div>
+                  <div className="mt-2 text-3xl font-black">{remainingWords}</div>
+                  <div className="mt-1 text-sm text-white/68">語</div>
+                </div>
+                <div className="rounded-2xl border border-white/10 bg-white/6 px-4 py-4">
+                  <div className="text-xs font-bold uppercase tracking-[0.16em] text-white/55">復習待ち</div>
+                  <div className="mt-2 text-3xl font-black">{dueCount}</div>
+                  <div className="mt-1 text-sm text-white/68">語</div>
+                </div>
+                <div className="rounded-2xl border border-white/10 bg-white/6 px-4 py-4">
+                  <div className="text-xs font-bold uppercase tracking-[0.16em] text-white/55">目安時間</div>
+                  <div className="mt-2 text-3xl font-black">{estimatedMinutes}</div>
+                  <div className="mt-1 text-sm text-white/68">分</div>
+                </div>
+              </div>
+
+              <div className="mt-4 rounded-2xl border border-white/10 bg-white/6 px-4 py-4">
+                <div className="flex items-center justify-between text-xs font-bold uppercase tracking-[0.16em] text-white/60">
+                  <span>今日の進み具合</span>
+                  <span>{todayCount} / {todayWordGoal} 語</span>
+                </div>
+                <div className="mt-3 h-2.5 overflow-hidden rounded-full bg-white/15">
+                  <div className="h-full rounded-full bg-gradient-to-r from-[#FCD797] to-white" style={{ width: `${todayProgressPercent}%` }}></div>
+                </div>
               </div>
             </div>
           </div>
-        </section>
+        </div>
+      </section>
 
-        <div className="space-y-6">
-          <section className="rounded-[32px] border border-slate-200 bg-white p-6 md:p-7 shadow-sm">
-            <div className="flex items-center justify-between gap-4">
-              <div>
-                <p className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">学習プラン</p>
-                <h3 className="mt-2 text-2xl font-black tracking-tight text-slate-950">
-                  {learningPlan ? '今日の学習プラン' : 'まだプラン未作成'}
-                </h3>
-              </div>
-              {learningPlan && (
-                <button onClick={() => setShowPlanEditModal(true)} className="rounded-full bg-slate-50 px-3 py-2 text-xs font-bold text-slate-500 hover:text-medace-600">
-                  編集
-                </button>
-              )}
-            </div>
-
-            {learningPlan ? (
-              <>
-                <p className="mt-4 text-base font-bold text-medace-600">"{learningPlan.goalDescription}"</p>
-                <div className="mt-5 grid gap-3 sm:grid-cols-3">
-                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
-                    <div className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">1日の目標</div>
-                    <div className="mt-2 text-2xl font-black text-slate-950">{learningPlan.dailyWordGoal}</div>
-                    <div className="text-sm text-slate-500">語 / 日</div>
-                  </div>
-                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
-                    <div className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">目標日</div>
-                    <div className="mt-2 text-lg font-black text-slate-950">{learningPlan.targetDate}</div>
-                    <div className="text-sm text-slate-500">完了予定</div>
-                  </div>
-                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
-                    <div className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">対象教材</div>
-                    <div className="mt-2 text-2xl font-black text-slate-950">{plannedBooks.length}</div>
-                    <div className="text-sm text-slate-500">優先教材</div>
-                  </div>
-                </div>
-                <div className="mt-5 flex flex-wrap gap-2">
-                  {plannedBooks.slice(0, 4).map((book) => (
-                    <span key={book.id} className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-600">
-                      {book.title}
-                    </span>
-                  ))}
-                </div>
-              </>
-            ) : (
-              <div className="mt-5 rounded-3xl bg-[linear-gradient(135deg,#66321A_0%,#F66D0B_100%)] px-5 py-5 text-white">
-                <p className="text-sm leading-relaxed text-white/75">
-                  診断結果と優先教材から、毎日の単語数とコースを自動で提案します。迷う時間を先に消します。
-                </p>
-                <button
-                  onClick={handleGeneratePlan}
-                  disabled={generatingPlan}
-                  className="mt-4 inline-flex items-center gap-2 rounded-2xl bg-white px-4 py-3 text-sm font-bold text-medace-900 hover:bg-medace-50 disabled:opacity-50"
-                >
-                  {generatingPlan ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-                  プランを生成
-                </button>
-              </div>
-            )}
-          </section>
-
-          {accountOverview && (
-            <section className="rounded-[32px] border border-slate-200 bg-white p-6 md:p-7 shadow-sm">
-              <p className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">ご利用プラン</p>
-              <div className="mt-2 flex items-center justify-between gap-4">
-                <h3 className="text-xl font-black tracking-tight text-slate-950">{SUBSCRIPTION_PLAN_LABELS[accountOverview.subscriptionPlan]}</h3>
-                <span className="rounded-full bg-slate-50 px-3 py-1 text-xs font-bold text-slate-500">
-                  {accountOverview.audienceLabel} / {accountOverview.priceLabel}
-                </span>
-              </div>
-              <div className="mt-5">
-                <div className="flex items-center justify-between text-xs font-bold uppercase tracking-[0.18em] text-slate-400">
-                  <span>AIサポート利用状況</span>
-                  <span>{aiBudgetPercent}%</span>
-                </div>
-                <div className="mt-2 h-2.5 overflow-hidden rounded-full bg-slate-100">
-                  <div className="h-full rounded-full bg-gradient-to-r from-medace-300 to-medace-500" style={{ width: `${aiBudgetPercent}%` }}></div>
-                </div>
-              </div>
-              <div className="mt-4 rounded-2xl bg-medace-50 px-4 py-3 text-sm text-medace-900">
-                <div className="font-bold">{aiUsageLabel}</div>
-                <div className="mt-1 text-medace-900/70">{aiUsageCopy}</div>
-              </div>
-              <div className="mt-4 space-y-2">
-                {accountOverview.featureSummary.map((item) => (
-                  <div key={item} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
-                    {item}
-                  </div>
-                ))}
-              </div>
-            </section>
+      <section className="rounded-[32px] border border-slate-200 bg-white p-6 md:p-7 shadow-sm">
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">学習プラン</p>
+            <h3 className="mt-2 text-2xl font-black tracking-tight text-slate-950">
+              {learningPlan ? '今日の学習プラン' : 'まだプラン未作成'}
+            </h3>
+          </div>
+          {learningPlan && (
+            <button onClick={() => setShowPlanEditModal(true)} className="rounded-full bg-slate-50 px-3 py-2 text-xs font-bold text-slate-500 hover:text-medace-600">
+              編集
+            </button>
           )}
         </div>
-      </div>
 
-      {accountOverview && (
-        <PlanExperiencePanel
+        {learningPlan ? (
+          <>
+            <p className="mt-4 text-base font-bold text-medace-600">"{learningPlan.goalDescription}"</p>
+            {learningPreference && (
+              <div className="mt-4 rounded-2xl border border-medace-100 bg-medace-50/70 px-4 py-4 text-sm text-medace-900">
+                <div className="font-bold">プラン生成に使う条件</div>
+                <div className="mt-1 leading-relaxed">{preferenceSummary}</div>
+              </div>
+            )}
+            <div className="mt-5 grid gap-3 sm:grid-cols-3">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                <div className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">1日の目標</div>
+                <div className="mt-2 text-2xl font-black text-slate-950">{learningPlan.dailyWordGoal}</div>
+                <div className="text-sm text-slate-500">語 / 日</div>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                <div className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">目標日</div>
+                <div className="mt-2 text-lg font-black text-slate-950">{learningPlan.targetDate}</div>
+                <div className="text-sm text-slate-500">完了予定</div>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                <div className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">対象教材</div>
+                <div className="mt-2 text-2xl font-black text-slate-950">{plannedBooks.length}</div>
+                <div className="text-sm text-slate-500">優先教材</div>
+              </div>
+            </div>
+            <div className="mt-5 flex flex-wrap gap-2">
+              {plannedBooks.slice(0, 4).map((book) => (
+                <span key={book.id} className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-600">
+                  {book.title}
+                </span>
+              ))}
+            </div>
+          </>
+        ) : (
+          <div className="mt-5 rounded-3xl bg-[linear-gradient(135deg,#66321A_0%,#F66D0B_100%)] px-5 py-5 text-white">
+            <p className="text-sm leading-relaxed text-white/75">
+              診断結果に加えて、目標試験・試験日・学習時間・苦手分野をもとに、毎日の単語数とコースを自動で提案します。
+            </p>
+            <button
+              onClick={handleGeneratePlan}
+              disabled={generatingPlan}
+              className="mt-4 inline-flex items-center gap-2 rounded-2xl bg-white px-4 py-3 text-sm font-bold text-medace-900 hover:bg-medace-50 disabled:opacity-50"
+            >
+              {generatingPlan ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+              プランを生成
+            </button>
+          </div>
+        )}
+      </section>
+
+      {isGameMode && (
+        <StudyCompanion
           user={user}
-          accountOverview={accountOverview}
-          plannedBookCount={plannedBooks.length}
-          coachNotificationCount={coachNotifications.length}
-        />
-      )}
-
-      <StudyCompanion
-        user={user}
-        dueCount={dueCount}
-        learnedWords={learnedWords}
-        totalTrackedWords={totalTrackedWords}
-        coverageRate={coverageRate}
-        learningPlan={learningPlan}
-        activityLogs={activityLogs}
-        masteryDist={masteryDist}
-        onStartQuest={() => onSelectBook('smart-session', 'study')}
-      />
-
-      {showAdSlots && (
-        <AdSenseSlot
-          slot={import.meta.env.VITE_ADSENSE_SLOT_DASHBOARD_SECONDARY}
-          label="Sponsored"
-          minHeightClassName="min-h-[180px]"
+          dueCount={dueCount}
+          todayCount={todayCount}
+          weekTotal={weekTotal}
+          dailyGoal={todayWordGoal}
+          weeklyGoal={weeklyGoal}
+          stabilizedWords={stabilizedWords}
+          onStartQuest={() => onSelectBook('smart-session', 'study')}
         />
       )}
 
@@ -865,98 +944,208 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onSelectBook }) => {
         </section>
       )}
 
-      {/* SECTION: Analytics & Ranking & Status */}
-      <div className="space-y-6">
-          <ActivityBarChart logs={activityLogs} dailyGoal={learningPlan?.dailyWordGoal} />
-          
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              {/* Mastery Distribution */}
-              <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm col-span-1 md:col-span-2">
-                  <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2 mb-6">
-                      <Activity className="w-5 h-5 text-medace-500" /> 学習ステータス
-                  </h3>
-                  {masteryDist ? (
-                      <div className="flex flex-col sm:flex-row items-center justify-around gap-6">
-                          <div className="relative w-40 h-40 flex-shrink-0">
-                              {/* Conic Gradient Pie Chart */}
-                              <div 
-                                  className="w-full h-full rounded-full"
-                                  style={{
-                                      background: `conic-gradient(
-                                          #22c55e 0% ${Math.round((masteryDist.graduated / (masteryDist.total || 1)) * 100)}%,
-                                          #3b82f6 0% ${Math.round(((masteryDist.graduated + masteryDist.review) / (masteryDist.total || 1)) * 100)}%,
-                                          #f97316 0% ${Math.round(((masteryDist.graduated + masteryDist.review + masteryDist.learning) / (masteryDist.total || 1)) * 100)}%,
-                                          #f1f5f9 0% 100%
-                                      )`
-                                  }}
-                              ></div>
-                              <div className="absolute inset-4 bg-white rounded-full flex flex-col items-center justify-center">
-                                   <span className="text-3xl font-bold text-slate-800">{masteryDist.total}</span>
-                                   <span className="text-xs text-slate-400 font-bold uppercase">合計単語</span>
-                              </div>
-                          </div>
-                          <div className="grid grid-cols-2 gap-4 w-full">
-                              <div className="p-3 rounded-lg bg-green-50 border border-green-100">
-                                  <div className="text-xs text-green-600 font-bold uppercase">{STATUS_LABELS['graduated']}</div>
-                                  <div className="text-xl font-bold text-slate-800">{masteryDist.graduated}</div>
-                              </div>
-                              <div className="p-3 rounded-lg bg-blue-50 border border-blue-100">
-                                  <div className="text-xs text-blue-600 font-bold uppercase">{STATUS_LABELS['review']}</div>
-                                  <div className="text-xl font-bold text-slate-800">{masteryDist.review}</div>
-                              </div>
-                              <div className="p-3 rounded-lg bg-orange-50 border border-orange-100">
-                                  <div className="text-xs text-orange-600 font-bold uppercase">{STATUS_LABELS['learning']}</div>
-                                  <div className="text-xl font-bold text-slate-800">{masteryDist.learning}</div>
-                              </div>
-                              <div className="p-3 rounded-lg bg-slate-50 border border-slate-100">
-                                  <div className="text-xs text-slate-500 font-bold uppercase">{STATUS_LABELS['new']}</div>
-                                  <div className="text-xl font-bold text-slate-800">{masteryDist.total - (masteryDist.graduated + masteryDist.review + masteryDist.learning)}</div>
-                              </div>
-                          </div>
+      {canShowAccountDetails && (
+        <div className="space-y-4">
+          <button
+            onClick={() => setShowAccountDetails((prev) => !prev)}
+            className="flex w-full items-center justify-between rounded-2xl border border-slate-200 bg-white px-5 py-4 text-left shadow-sm transition-colors hover:bg-slate-50"
+          >
+            <div>
+              <div className="text-sm font-bold text-slate-900">プラン・学習環境の詳細</div>
+              <div className="mt-1 text-sm text-slate-500">課金情報やAI利用枠は必要なときだけ開けます。</div>
+            </div>
+            {showAccountDetails ? <ChevronUp className="h-5 w-5 text-slate-400" /> : <ChevronDown className="h-5 w-5 text-slate-400" />}
+          </button>
+
+          {showAccountDetails && (
+            <div className="space-y-6 animate-in fade-in slide-in-from-top-2">
+              {accountOverview && (
+                <section className="rounded-[32px] border border-slate-200 bg-white p-6 md:p-7 shadow-sm">
+                  <p className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">ご利用プラン</p>
+                  <div className="mt-2 flex items-center justify-between gap-4">
+                    <h3 className="text-xl font-black tracking-tight text-slate-950">{SUBSCRIPTION_PLAN_LABELS[accountOverview.subscriptionPlan]}</h3>
+                <span className="rounded-full bg-slate-50 px-3 py-1 text-xs font-bold text-slate-500">
+                  {accountOverview.audienceLabel} / {accountOverview.priceLabel}
+                </span>
+              </div>
+              <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                {accountOverview.pricingNote}
+              </div>
+              <div className="mt-5">
+                    <div className="flex items-center justify-between text-xs font-bold uppercase tracking-[0.18em] text-slate-400">
+                      <span>AIサポート利用状況</span>
+                      <span>{aiBudgetPercent}%</span>
+                    </div>
+                    <div className="mt-2 h-2.5 overflow-hidden rounded-full bg-slate-100">
+                      <div className="h-full rounded-full bg-gradient-to-r from-medace-300 to-medace-500" style={{ width: `${aiBudgetPercent}%` }}></div>
+                    </div>
+                  </div>
+                  <div className="mt-4 rounded-2xl bg-medace-50 px-4 py-3 text-sm text-medace-900">
+                    <div className="font-bold">{aiUsageLabel}</div>
+                    <div className="mt-1 text-medace-900/70">{aiUsageCopy}</div>
+                  </div>
+                  <div className="mt-4 space-y-2">
+                    {accountOverview.featureSummary.map((item) => (
+                      <div key={item} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                        {item}
                       </div>
-                  ) : (
-                      <div className="h-40 flex items-center justify-center text-slate-400">データなし</div>
-                  )}
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              {accountOverview && (
+                <PlanExperiencePanel
+                  user={user}
+                  accountOverview={accountOverview}
+                  plannedBookCount={plannedBooks.length}
+                  coachNotificationCount={coachNotifications.length}
+                />
+              )}
+
+              {showAdSlots && (
+                <AdSenseSlot
+                  slot={import.meta.env.VITE_ADSENSE_SLOT_DASHBOARD_SECONDARY}
+                  label="Sponsored"
+                  minHeightClassName="min-h-[180px]"
+                />
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="space-y-4">
+        <button
+          onClick={() => setShowProgressDetails((prev) => !prev)}
+          className="flex w-full items-center justify-between rounded-2xl border border-slate-200 bg-white px-5 py-4 text-left shadow-sm transition-colors hover:bg-slate-50"
+        >
+          <div>
+            <div className="text-sm font-bold text-slate-900">くわしい学習記録</div>
+            <div className="mt-1 text-sm text-slate-500">週間記録やランキングは必要なときだけ確認できます。</div>
+          </div>
+          {showProgressDetails ? <ChevronUp className="h-5 w-5 text-slate-400" /> : <ChevronDown className="h-5 w-5 text-slate-400" />}
+        </button>
+
+        {showProgressDetails && (
+          <div className="space-y-6 animate-in fade-in slide-in-from-top-2">
+            <ActivityBarChart logs={activityLogs} dailyGoal={learningPlan?.dailyWordGoal} />
+
+            <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
+              <div className="col-span-1 rounded-xl border border-slate-200 bg-white p-6 shadow-sm md:col-span-2">
+                <h3 className="mb-6 flex items-center gap-2 text-lg font-bold text-slate-800">
+                  <Activity className="w-5 h-5 text-medace-500" /> 学習ステータス
+                </h3>
+                {masteryDist ? (
+                  <div className="flex flex-col items-center justify-around gap-6 sm:flex-row">
+                    <div className="relative h-40 w-40 flex-shrink-0">
+                      <div
+                        className="h-full w-full rounded-full"
+                        style={{
+                          background: `conic-gradient(
+                            #22c55e 0% ${Math.round((masteryDist.graduated / (masteryDist.total || 1)) * 100)}%,
+                            #3b82f6 0% ${Math.round(((masteryDist.graduated + masteryDist.review) / (masteryDist.total || 1)) * 100)}%,
+                            #f97316 0% ${Math.round(((masteryDist.graduated + masteryDist.review + masteryDist.learning) / (masteryDist.total || 1)) * 100)}%,
+                            #f1f5f9 0% 100%
+                          )`,
+                        }}
+                      ></div>
+                      <div className="absolute inset-4 flex flex-col items-center justify-center rounded-full bg-white">
+                        <span className="text-3xl font-bold text-slate-800">{masteryDist.total}</span>
+                        <span className="text-xs font-bold uppercase text-slate-400">合計単語</span>
+                      </div>
+                    </div>
+                    <div className="grid w-full grid-cols-2 gap-4">
+                      <div className="rounded-lg border border-green-100 bg-green-50 p-3">
+                        <div className="text-xs font-bold uppercase text-green-600">{STATUS_LABELS['graduated']}</div>
+                        <div className="text-xl font-bold text-slate-800">{masteryDist.graduated}</div>
+                      </div>
+                      <div className="rounded-lg border border-blue-100 bg-blue-50 p-3">
+                        <div className="text-xs font-bold uppercase text-blue-600">{STATUS_LABELS['review']}</div>
+                        <div className="text-xl font-bold text-slate-800">{masteryDist.review}</div>
+                      </div>
+                      <div className="rounded-lg border border-orange-100 bg-orange-50 p-3">
+                        <div className="text-xs font-bold uppercase text-orange-600">{STATUS_LABELS['learning']}</div>
+                        <div className="text-xl font-bold text-slate-800">{masteryDist.learning}</div>
+                      </div>
+                      <div className="rounded-lg border border-slate-100 bg-slate-50 p-3">
+                        <div className="text-xs font-bold uppercase text-slate-500">{STATUS_LABELS['new']}</div>
+                        <div className="text-xl font-bold text-slate-800">{masteryDist.total - (masteryDist.graduated + masteryDist.review + masteryDist.learning)}</div>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex h-40 items-center justify-center text-slate-400">データなし</div>
+                )}
               </div>
 
-              {/* Leaderboard */}
-              <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
-                  <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2 mb-4">
-                      <BarChart className="w-5 h-5 text-medace-500" /> XPランキング
+              {isGameMode ? (
+                <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+                  <h3 className="mb-4 flex items-center gap-2 text-lg font-bold text-slate-800">
+                    <BarChart className="w-5 h-5 text-medace-500" /> XPランキング
                   </h3>
                   <div className="space-y-3">
-                      {leaderboard.map((entry, idx) => {
-                          const league = getLeague(entry.level);
-                          return (
-                          <div 
-                            key={entry.uid} 
-                            className={`flex items-center justify-between p-3 rounded-lg border transition-all hover:scale-[1.02] ${entry.isCurrentUser ? 'bg-medace-50 border-medace-200 shadow-sm' : 'bg-white border-slate-100'}`}
-                          >
-                              <div className="flex items-center gap-3">
-                                  <div className={`w-6 h-6 flex items-center justify-center rounded-full text-xs font-bold ${idx === 0 ? 'bg-yellow-100 text-yellow-700' : idx === 1 ? 'bg-slate-100 text-slate-700' : idx === 2 ? 'bg-orange-50 text-orange-700' : 'text-slate-400'}`}>
-                                      {entry.rank}
-                                  </div>
-                                  <div>
-                                      <div className={`text-sm font-bold flex items-center gap-2 ${entry.isCurrentUser ? 'text-medace-700' : 'text-slate-700'}`}>
-                                          {entry.displayName} {entry.isCurrentUser && <span className="text-[10px] bg-medace-200 text-medace-800 px-1.5 rounded">あなた</span>}
-                                      </div>
-                                      <div className="flex items-center gap-1.5 mt-0.5">
-                                          <div className={`text-[10px] px-1.5 py-0.5 rounded border flex items-center gap-1 ${league.color}`}>
-                                              {league.icon} {league.name}
-                                          </div>
-                                          <div className="text-[10px] text-slate-400">Lv.{entry.level}</div>
-                                      </div>
-                                  </div>
+                    {leaderboard.map((entry, idx) => {
+                      const league = getLeague(entry.level);
+                      return (
+                        <div
+                          key={entry.uid}
+                          className={`flex items-center justify-between rounded-lg border p-3 transition-all hover:scale-[1.02] ${entry.isCurrentUser ? 'border-medace-200 bg-medace-50 shadow-sm' : 'border-slate-100 bg-white'}`}
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold ${idx === 0 ? 'bg-yellow-100 text-yellow-700' : idx === 1 ? 'bg-slate-100 text-slate-700' : idx === 2 ? 'bg-orange-50 text-orange-700' : 'text-slate-400'}`}>
+                              {entry.rank}
+                            </div>
+                            <div>
+                              <div className={`flex items-center gap-2 text-sm font-bold ${entry.isCurrentUser ? 'text-medace-700' : 'text-slate-700'}`}>
+                                {entry.displayName} {entry.isCurrentUser && <span className="rounded bg-medace-200 px-1.5 text-[10px] text-medace-800">あなた</span>}
                               </div>
-                              <div className="text-sm font-bold text-slate-600">
-                                  {entry.xp} <span className="text-xs text-slate-400">XP</span>
+                              <div className="mt-0.5 flex items-center gap-1.5">
+                                <div className={`flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] ${league.color}`}>
+                                  {league.icon} {league.name}
+                                </div>
+                                <div className="text-[10px] text-slate-400">Lv.{entry.level}</div>
                               </div>
+                            </div>
                           </div>
-                      )})}
-                      {leaderboard.length === 0 && <p className="text-center text-slate-400 text-xs">ランキングデータなし</p>}
+                          <div className="text-sm font-bold text-slate-600">
+                            {entry.xp} <span className="text-xs text-slate-400">XP</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {leaderboard.length === 0 && <p className="text-center text-xs text-slate-400">ランキングデータなし</p>}
                   </div>
-              </div>
+                </div>
+              ) : (
+                <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+                  <h3 className="mb-4 flex items-center gap-2 text-lg font-bold text-slate-800">
+                    <Target className="w-5 h-5 text-medace-500" /> 今週のペース
+                  </h3>
+                  <div className="space-y-3">
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                      <div className="text-xs font-bold uppercase tracking-[0.16em] text-slate-400">今日</div>
+                      <div className="mt-2 text-2xl font-black text-slate-950">{todayCount}<span className="ml-1 text-sm text-slate-400">/ {todayWordGoal} 語</span></div>
+                      <div className="mt-2 h-2 overflow-hidden rounded-full bg-white">
+                        <div className="h-full rounded-full bg-gradient-to-r from-medace-400 to-medace-600" style={{ width: `${todayProgressPercent}%` }}></div>
+                      </div>
+                    </div>
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                      <div className="text-xs font-bold uppercase tracking-[0.16em] text-slate-400">今週</div>
+                      <div className="mt-2 text-2xl font-black text-slate-950">{weekTotal}<span className="ml-1 text-sm text-slate-400">/ {weeklyGoal} 語</span></div>
+                      <div className="mt-2 text-sm text-slate-500">{weeklyRemaining === 0 ? '今週の目標ペースに到達しています。' : `あと ${weeklyRemaining} 語で今週の目標です。`}</div>
+                    </div>
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                      <div className="text-xs font-bold uppercase tracking-[0.16em] text-slate-400">連続記録</div>
+                      <div className="mt-2 text-2xl font-black text-slate-950">{user.stats?.currentStreak || 0}<span className="ml-1 text-sm text-slate-400">日</span></div>
+                      <div className="mt-2 text-sm text-slate-500">他人比較ではなく、自分のペースで積み上げる表示です。</div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
+        )}
       </div>
 
       {/* SECTION: My Phrasebooks */}
@@ -1023,7 +1212,12 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onSelectBook }) => {
                     />
                 ))
             )}
-            {(!learningPlan && books.filter(b => b.isPriority).length === 0) && <p className="text-slate-400 text-sm">推奨コースはありません</p>}
+            {books.length === 0 && (
+                <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-6 text-sm leading-relaxed text-slate-600 md:col-span-2 lg:col-span-3">
+                    現在のプランでは公式コースは配信されていません。My単語帳を作成するか、ビジネス導入済みワークスペースで利用してください。
+                </div>
+            )}
+            {(books.length > 0 && !learningPlan && books.filter(b => b.isPriority).length === 0) && <p className="text-slate-400 text-sm">推奨コースはありません</p>}
         </div>
 
         {/* SECTION: Library (Collapsed) */}
@@ -1040,17 +1234,23 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onSelectBook }) => {
             </button>
 
             {showLibrary && (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mt-6 animate-in slide-in-from-top-4">
-                    {books.map((book) => (
-                    <BookCard 
-                        key={book.id} 
-                        book={book} 
-                        progress={progressMap[book.id] || { bookId: book.id, percentage: 0, learnedCount: 0, totalCount: book.wordCount }}
-                        onDelete={handleDeleteBook}
-                        onSelect={onSelectBook}
-                    />
-                    ))}
-                </div>
+                books.length > 0 ? (
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mt-6 animate-in slide-in-from-top-4">
+                        {books.map((book) => (
+                        <BookCard 
+                            key={book.id} 
+                            book={book} 
+                            progress={progressMap[book.id] || { bookId: book.id, percentage: 0, learnedCount: 0, totalCount: book.wordCount }}
+                            onDelete={handleDeleteBook}
+                            onSelect={onSelectBook}
+                        />
+                        ))}
+                    </div>
+                ) : (
+                    <div className="mt-6 rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-6 text-sm leading-relaxed text-slate-600 animate-in slide-in-from-top-4">
+                        公式コースはビジネス本導入プラン向けに限定されています。個人利用では My単語帳 を使って学習を進めてください。
+                    </div>
+                )
             )}
         </div>
       </div>

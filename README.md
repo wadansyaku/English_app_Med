@@ -1,15 +1,44 @@
 # Steady Study
 
-React + Vite の英単語学習アプリです。現在は Cloudflare Pages + Pages Functions + D1 を前提に動く構成へ移行済みです。
+Steady Study は、塾・教室向け運用SaaSを主軸にした英単語学習プラットフォームです。個人学習アプリはサブ導線として残しつつ、講師フォロー、担当割当、教材権限、個別学習プランまでを Cloudflare 上で一体運用します。
 
-## いまの構成
+## 事業前提
+
+- メイン顧客: 塾・教室・小規模スクール
+- サブ顧客: 個人学習ユーザー
+- 初回診断: AI生成ではなく、静的な12問バンクで開始レベルを判定
+- AIの役割: 例文生成、クイズ生成、学習プラン生成、講師フォロー文面の下書き
+- 権限設計: グループ管理者は組織全体、講師は担当生徒と未割当生徒を中心に運用
+
+## 料金モデル
+
+- `TOC_FREE`: 個人フリー。広告付きセルフサーブ
+- `TOC_PAID`: 個人有料。広告なし個人拡張
+- `TOB_FREE`: 教室導入前の無料トライアル
+- `TOB_PAID`: 固定費1万円/月 + 生徒1人あたり2,000円/月 + 講師1人あたり500円/月 + 導入費60万円
+
+商用プラン定義は [config/subscription.ts](/Users/Yodai/projects/MedAce英単語アプリ/config/subscription.ts) にあります。
+
+## 教材カタログ戦略
+
+- ビジネス版公式教材（原本）: Nanjyo English App のオリジナル単語データベースを `Steady Study Original` として配布
+- ビジネス版公式教材（ライセンス）: 現在のライセンス取得済み教材データベースを `LICENSED_PARTNER` として配布
+- 個人/ユーザー作成教材: `USER_GENERATED`
+- 公開範囲:
+  - `ALL_PLANS`: 全プランで利用可
+  - `BUSINESS_ONLY`: ビジネス本導入 (`TOB_PAID`) のみ利用可
+
+2026-03-06 時点の方針として、既存の公式教材は `Steady Study Original` を含めて `BUSINESS_ONLY` に寄せます。個人/無料ユーザーは公式教材ではなく、自作教材導線を前提にします。
+
+## 技術構成
 
 - Frontend: Vite / React 19
 - Backend: Cloudflare Pages Functions
 - Database: Cloudflare D1 (`medace-db`)
+- Offline fallback: IndexedDB
 - AI: Gemini API を Functions 経由で利用
 
-クライアントに秘密情報は埋め込まず、認証・教材データ・学習履歴・AI 呼び出しは `/api/*` 経由で処理します。
+秘密情報はクライアントに埋め込まず、認証・教材データ・学習履歴・AI呼び出しは `/api/*` 経由で処理します。Supabase 前提の構成は廃止済みです。
 
 ## 開発コマンド
 
@@ -27,15 +56,16 @@ npm run build
 npx wrangler d1 migrations apply medace-db --local
 ```
 
-2. curated CSV から seed SQL を生成
+2. 原本教材 + ライセンス教材をまとめてビジネス限定 seed SQL 化
 
 ```bash
 node scripts/build-seed-sql.mjs \
-  /Users/Yodai/projects/language_database_2_2/output_curated/20260208_225334/MASTER_DATABASE_REFINED.csv \
+  --original-csv /Users/Yodai/projects/NanjyoEnglishApp/docs/wordbank_pos_audit/20260208_225334/ORIGINAL_WORDBANK_JHS_HS_FINAL_CONFIRMED.csv \
+  --licensed-csv /Users/Yodai/projects/language_database_2_2/output_curated/20260208_225334/MASTER_DATABASE_REFINED.csv \
   ./tmp/d1-seed.sql
 ```
 
-この seed 生成はデフォルトで `TOEFLテスト英単語3800` を除外します。追加で除外したい書籍がある場合は `--exclude-book "書名"` を付けてください。
+このスクリプトは入力CSVの形式を自動判定します。`--original-csv` は Nanjyo English App の原本CSVを学年帯別教材へ再編し、`--licensed-csv` は既存の単語帳CSVをそのまま教材化します。`TOEFLテスト英単語3800` はデフォルトで除外され、追加除外は `--exclude-book "書名"` で指定できます。
 
 3. ローカル D1 に投入
 
@@ -52,7 +82,7 @@ npx wrangler pages dev dist
 
 ## Cloudflare 本番
 
-このワークスペースでは以下の Cloudflare リソースを作成済みです。
+作成済みリソース:
 
 - Pages Project: `medace-english-app`
 - Production URL: [https://medace-english-app.pages.dev](https://medace-english-app.pages.dev)
@@ -67,32 +97,51 @@ npx wrangler d1 migrations apply medace-db --remote
 
 ### 本番 seed
 
-remote D1 では `BEGIN TRANSACTION` を含む SQL が使えないため、`--remote` を付けて生成します。
+remote D1 では `BEGIN TRANSACTION` を含む SQL を使えないため、`--remote` を付けます。
 
 ```bash
 node scripts/build-seed-sql.mjs --remote \
-  /Users/Yodai/projects/language_database_2_2/output_curated/20260208_225334/MASTER_DATABASE_REFINED.csv \
+  --original-csv /Users/Yodai/projects/NanjyoEnglishApp/docs/wordbank_pos_audit/20260208_225334/ORIGINAL_WORDBANK_JHS_HS_FINAL_CONFIRMED.csv \
+  --licensed-csv /Users/Yodai/projects/language_database_2_2/output_curated/20260208_225334/MASTER_DATABASE_REFINED.csv \
   ./tmp/d1-seed-remote.sql
 
 npx wrangler d1 execute medace-db --remote --file=./tmp/d1-seed-remote.sql
 ```
 
-本番でも同様に `TOEFLテスト英単語3800` は seed 対象から外れます。
-
 ### Pages Secrets
 
-最低限、管理者デモ用パスワードは設定してください。AI 機能を使うなら Gemini key も必要です。
+最低限、管理者デモ用パスワードは設定してください。AI機能を使うなら Gemini key も必要です。
 
 ```bash
 echo 'your-admin-password' | npx wrangler pages secret put ADMIN_DEMO_PASSWORD --project-name medace-english-app
 echo 'your-gemini-api-key' | npx wrangler pages secret put GEMINI_API_KEY --project-name medace-english-app
 ```
 
-`ADMIN_DEMO_PASSWORD` は同じコマンドを再実行すればいつでも上書きできます。
+preview 環境も使う場合は、同じ secret を `--env preview` 付きで追加してください。
+
+```bash
+echo 'your-admin-password' | npx wrangler pages secret put ADMIN_DEMO_PASSWORD --project-name medace-english-app --env preview
+echo 'your-gemini-api-key' | npx wrangler pages secret put GEMINI_API_KEY --project-name medace-english-app --env preview
+```
+
+### GitHub Variables / Secrets
+
+GitHub Actions 側では次を使います。
+
+- Secrets:
+  - `CLOUDFLARE_API_TOKEN`
+  - `CLOUDFLARE_ACCOUNT_ID`
+- Variables:
+  - `CLOUDFLARE_PAGES_PROJECT`
+  - `CLOUDFLARE_D1_DATABASE`
+
+Variables 未設定時は workflow 側で `medace-english-app` / `medace-db` を既定値として使います。
+
+ローカルから接続状態を確認する場合は `npm run cf:doctor` を使ってください。`GEMINI_API_KEY` は未設定でも warning 扱いで、GitHub / Cloudflare の接続と Pages / D1 の疎通を先に確認できます。
 
 ### Frontend Environment Variables
 
-フリープランの広告枠を実配信するには、Vite の公開環境変数に AdSense 情報を入れてください。
+フリープランの広告枠を実配信するには、Vite の公開環境変数に AdSense 情報を設定します。
 
 ```bash
 VITE_ADSENSE_CLIENT_ID=ca-pub-xxxxxxxxxxxxxxxx
@@ -101,8 +150,6 @@ VITE_ADSENSE_SLOT_DASHBOARD_INLINE=1234567890
 VITE_ADSENSE_SLOT_DASHBOARD_SECONDARY=1234567890
 ```
 
-ローカル未設定時は、開発画面でスポンサー枠プレビューを表示します。本番では未設定なら広告枠は表示されません。
-
 ### デプロイ
 
 ```bash
@@ -110,40 +157,9 @@ npm run build
 npx wrangler pages deploy dist --project-name medace-english-app
 ```
 
-## GitHub 連携
+## 補足
 
-Git の `origin` は [https://github.com/wadansyaku/English_app_Med](https://github.com/wadansyaku/English_app_Med) に接続済みです。加えて、GitHub Actions を入れています。
-
-- `.github/workflows/ci.yml`
-  - `npm ci`
-  - `npm run typecheck`
-  - `npm run build`
-- `.github/workflows/deploy-pages.yml`
-  - `main` / `master` push 時に Cloudflare Pages へ deploy
-
-Cloudflare deploy workflow を使う場合は、GitHub Secrets に次を設定してください。
-
-```bash
-CLOUDFLARE_API_TOKEN
-CLOUDFLARE_ACCOUNT_ID
-```
-
-## 新しい事業/通知設計
-
-- 初回レベル診断は AI 生成をやめ、静的な 12 問の設問バンクで判定
-- 講師通知は `instructor_notifications` に保存され、生徒ダッシュボードに表示
-- 通知文は講師が直接書くこともでき、AI 下書きも使える
-- 課金区分は `TOC_FREE` / `TOC_PAID` / `TOB_FREE` / `TOB_PAID`
-- AI 機能はプランごとに許可機能と月次予算をサーバー側で制限
-
-商用まわりの共通定義は [config/subscription.ts](/Users/Yodai/projects/MedAce英単語アプリ/config/subscription.ts) にあります。
-
-## 主な改善点
-
-- `index.html` を通常の Vite エントリへ修正し、実際に JS バンドルされる状態へ戻した
-- Supabase 依存を削除し、Cloudflare D1 + Functions に移行した
-- `GEMINI_API_KEY` のクライアント露出をやめ、Functions 経由にした
-- 日本語タイトルで壊れやすかった book ID 生成を安定化した
-- curated DB (`MASTER_DATABASE_REFINED.csv`) を D1 に流し込むスクリプトを追加した
-- 初回診断を静的バンク化し、結果に見直しポイントを返すようにした
-- ダッシュボードに通知/課金/AI予算の可視化を追加した
+- 初回診断は静的12問で運用し、AI診断を主導線には置かない
+- 講師通知は `instructor_notifications` に保存され、生徒ダッシュボードへ表示
+- 学習条件は `learning_preferences`、担当割当は `student_instructor_assignments` で管理
+- 公式教材の公開範囲は `catalog_source` / `access_scope` で制御

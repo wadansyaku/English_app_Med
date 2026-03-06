@@ -1,5 +1,5 @@
 import { GoogleGenAI, Type } from '@google/genai';
-import { BookMetadata, EnglishLevel, LearningPlan, StudentRiskLevel, SubscriptionPlan, UserGrade, WordData } from '../../types';
+import { BookMetadata, EnglishLevel, LearningPlan, LearningPreference, StudentRiskLevel, SubscriptionPlan, UserGrade, WordData } from '../../types';
 import { AI_ACTION_ESTIMATES, getSubscriptionPolicy, MeteredAiAction } from '../../config/subscription';
 import { HttpError } from './http';
 import { AppEnv, DbUserRow } from './types';
@@ -317,20 +317,29 @@ const generateLearningPlan = async (env: AppEnv, payload: any): Promise<Learning
   const grade = payload.grade as UserGrade;
   const level = payload.level as EnglishLevel;
   const availableBooks = (Array.isArray(payload.availableBooks) ? payload.availableBooks : []) as BookMetadata[];
+  const learningPreference = (payload.learningPreference || null) as LearningPreference | null;
 
   try {
-    const bookList = availableBooks.map((book) => ({ id: book.id, title: book.title, priority: book.isPriority }));
+    const bookList = availableBooks.map((book) => ({
+      id: book.id,
+      title: book.title,
+      priority: book.isPriority,
+      source: book.catalogSource,
+      accessScope: book.accessScope,
+    }));
 
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash',
       contents: `
         User Profile: Grade ${grade}, Level ${level}.
+        Learning Preference: ${JSON.stringify(learningPreference || {})}.
         Available Books: ${JSON.stringify(bookList)}.
 
         Task: Create a personalized learning plan (Curriculum).
-        1. Select the most appropriate books (Max 5) for this user's level to focus on FIRST. Do not select everything.
-        2. Determine a realistic daily word goal (e.g., 10-30 words).
-        3. Set a goal description and target completion days.
+        1. Select the most appropriate books (Max 5) for this user's level, weak points, available study time, and target exam. Do not select everything.
+        2. Determine a realistic daily word goal based on daily study minutes and weekly study days.
+        3. Reflect urgency if exam_date is near, but do not output reckless word counts.
+        4. Set a concrete goal description and target completion days.
 
         Output JSON.
       `,

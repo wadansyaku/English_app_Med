@@ -1,4 +1,4 @@
-import { ActivityLog, AdminDashboardSnapshot, BookMetadata, BookProgress, DashboardSnapshot, LeaderboardEntry, LearningHistory, LearningPlan, MasteryDistribution, OrganizationDashboardSnapshot, OrganizationRole, StudentSummary, StudentWorksheetSnapshot, UserProfile, UserRole, WordData } from '../types';
+import { ActivityLog, AdminDashboardSnapshot, BookAccessScope, BookCatalogSource, BookMetadata, BookProgress, DashboardSnapshot, LeaderboardEntry, LearningHistory, LearningPlan, LearningPreference, MasteryDistribution, OrganizationDashboardSnapshot, OrganizationRole, StudentSummary, StudentWorksheetSnapshot, UserProfile, UserRole, WordData } from '../types';
 import { apiDelete, apiGet, apiPost } from './apiClient';
 import type { IStorageService } from './storage';
 
@@ -57,11 +57,21 @@ export class CloudflareStorageService implements IStorageService {
     });
   }
 
-  async batchImportWords(defaultBookName: string, csvRows: any[], onProgress: (progress: number) => void, createdByUid?: string, contextSummary?: string): Promise<void> {
+  async batchImportWords(
+    defaultBookName: string,
+    csvRows: any[],
+    onProgress: (progress: number) => void,
+    createdByUid?: string,
+    contextSummary?: string,
+    options?: {
+      catalogSource?: BookCatalogSource;
+      accessScope?: BookAccessScope;
+    }
+  ): Promise<void> {
     onProgress(5);
     await this.callStorage<void>({
       action: 'batchImportWords',
-      payload: { defaultBookName, csvRows, createdByUid, contextSummary },
+      payload: { defaultBookName, csvRows, createdByUid, contextSummary, options },
     });
     onProgress(100);
   }
@@ -175,6 +185,24 @@ export class CloudflareStorageService implements IStorageService {
 
   async getLearningPlan(uid: string): Promise<LearningPlan | null> {
     return this.callStorage<LearningPlan | null>({ action: 'getLearningPlan' });
+  }
+
+  async saveLearningPreference(preference: LearningPreference): Promise<void> {
+    await this.callStorage<void, { preference: LearningPreference }>({
+      action: 'saveLearningPreference',
+      payload: { preference },
+    });
+  }
+
+  async getLearningPreference(uid: string): Promise<LearningPreference | null> {
+    return this.callStorage<LearningPreference | null>({ action: 'getLearningPreference' });
+  }
+
+  async assignStudentInstructor(studentUid: string, instructorUid: string | null): Promise<void> {
+    await this.callStorage<void, { studentUid: string; instructorUid: string | null }>({
+      action: 'assignStudentInstructor',
+      payload: { studentUid, instructorUid },
+    });
   }
 
   async getDashboardSnapshot(uid: string): Promise<DashboardSnapshot> {

@@ -1,4 +1,4 @@
-import { BookMetadata, EnglishLevel, LearningPlan, StudentRiskLevel, UserGrade, WordData } from '../types';
+import { BookMetadata, EnglishLevel, LearningPlan, LearningPreference, StudentRiskLevel, UserGrade, WordData } from '../types';
 import { ApiError, apiPost } from './apiClient';
 
 export interface GeneratedContext {
@@ -41,7 +41,7 @@ export const generateGeminiSentence = async (
   definition: string,
   userLevel: EnglishLevel = EnglishLevel.B1,
   sourceContext?: string
-): Promise<GeneratedContext> => {
+): Promise<GeneratedContext | null> => {
   try {
     return await callAi<GeneratedContext, { word: string; definition: string; userLevel: EnglishLevel; sourceContext?: string }>('generateGeminiSentence', {
       word,
@@ -50,11 +50,9 @@ export const generateGeminiSentence = async (
       sourceContext,
     });
   } catch (error) {
-    if (isRateLimitError(error)) {
-      return { english: 'AI利用制限に達しました。', japanese: 'しばらく待ってから再試行してください。' };
-    }
+    if (isRateLimitError(error)) return null;
     console.error('Sentence generation failed:', error);
-    return { english: '例文を生成できませんでした。', japanese: 'エラーが発生しました。' };
+    return null;
   }
 };
 
@@ -108,15 +106,17 @@ export const extractVocabularyFromMedia = async (base64Data: string, mimeType: s
 export const generateLearningPlan = async (
   grade: UserGrade,
   level: EnglishLevel,
-  availableBooks: BookMetadata[]
+  availableBooks: BookMetadata[],
+  learningPreference?: LearningPreference | null,
 ): Promise<LearningPlan | null> => {
   if (availableBooks.length === 0) return null;
 
   try {
-    return await callAi<LearningPlan | null, { grade: UserGrade; level: EnglishLevel; availableBooks: BookMetadata[] }>('generateLearningPlan', {
+    return await callAi<LearningPlan | null, { grade: UserGrade; level: EnglishLevel; availableBooks: BookMetadata[]; learningPreference?: LearningPreference | null }>('generateLearningPlan', {
       grade,
       level,
       availableBooks,
+      learningPreference,
     });
   } catch (error) {
     console.error('Plan generation failed:', error);

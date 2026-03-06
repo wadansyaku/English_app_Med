@@ -2,10 +2,10 @@ export const BRAND = {
   officialName: 'Steady Study',
   shortName: 'Steady Study',
   productLabel: '英単語学習スペース',
-  supportLabel: 'メッドエースの英語学習アプリ',
+  supportLabel: 'Steady Study の英語学習アプリ',
   title: 'Steady Study | 英単語学習スペース',
   mark: 'SS',
-  footerLabel: 'MedAce Education',
+  footerLabel: 'Steady Study',
 } as const;
 
 export const AUTH_COPY = {

@@ -4,7 +4,9 @@
 ## 1. Current Focus: Social Features & Stability
 **Priority: High** (社会的機能と安定性)
 - [ ] **Leaderboard Logic**: 現在はモックまたは単純な全期間XP。週間ランキングのロジック（DBスキーマ変更含む）を検討する。
-- [ ] **Data Sync**: オフラインモード(IndexedDB)とクラウド(Supabase)の同期ロジック強化。
+- [ ] **Data Sync**: オフラインモード(IndexedDB)と Cloudflare D1 / Pages Functions の同期ロジック強化。
+- [ ] **Assignment Ops**: 担当講師割当の履歴化と、クラス単位権限までの拡張。
+- [ ] **BtoB KPI**: 通知後再開率、割当率、学習プラン浸透率を継続計測できるようにする。
 
 ## 2. Next Up: Mobile App Experience
 - [ ] **PWA Manifest**: `manifest.json` の作成とアイコン設定 (HTML metaタグは設定済み)。

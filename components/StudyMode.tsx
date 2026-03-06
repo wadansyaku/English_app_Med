@@ -26,9 +26,11 @@ const StudyMode: React.FC<StudyModeProps> = ({ user, bookId, onBack, onSessionCo
   const [showTranslation, setShowTranslation] = useState(false);
   const [aiImage, setAiImage] = useState<string | null>(null);
   const [aiImageLoading, setAiImageLoading] = useState(false);
+  const [showHints, setShowHints] = useState(false);
+  const [imageHintUnavailable, setImageHintUnavailable] = useState(false);
   
   // AI Cache (Prefetching)
-  const contextCache = useRef<Map<string, GeneratedContext>>(new Map());
+  const contextCache = useRef<Map<string, GeneratedContext | null>>(new Map());
   
   // Editing State
   const [isEditing, setIsEditing] = useState(false);
@@ -43,6 +45,7 @@ const StudyMode: React.FC<StudyModeProps> = ({ user, bookId, onBack, onSessionCo
   const [streakBonusXP, setStreakBonusXP] = useState(0);
   const [leveledUp, setLeveledUp] = useState(false);
   const [updatedUser, setUpdatedUser] = useState<UserProfile | null>(null);
+  const [reviewWords, setReviewWords] = useState<WordData[]>([]);
 
   // Voice Setup
   const [selectedVoice, setSelectedVoice] = useState<SpeechSynthesisVoice | null>(null);
@@ -99,63 +102,82 @@ const StudyMode: React.FC<StudyModeProps> = ({ user, bookId, onBack, onSessionCo
 
   // Prefetch Logic (Context-Aware)
   useEffect(() => {
-    if (queue.length === 0) return;
+    if (queue.length === 0 || !showHints) return;
 
-    const prefetchNext = async () => {
-        const current = queue[currentIndex];
-        
-        if (current.exampleSentence && current.exampleMeaning) {
-            if (!contextCache.current.has(current.id)) {
-                contextCache.current.set(current.id, {
-                    english: current.exampleSentence,
-                    japanese: current.exampleMeaning
-                });
-            }
+    let cancelled = false;
+
+    const loadHints = async () => {
+      const current = queue[currentIndex];
+
+      if (current.exampleSentence && current.exampleMeaning && !contextCache.current.has(current.id)) {
+        contextCache.current.set(current.id, {
+          english: current.exampleSentence,
+          japanese: current.exampleMeaning,
+        });
+      }
+
+      const userLevel = user.englishLevel || EnglishLevel.B1;
+      const cached = contextCache.current.get(current.id);
+
+      if (contextCache.current.has(current.id)) {
+        if (!cancelled) {
+          setAiContext(cached ?? null);
+          setAiContextLoading(false);
         }
-
-        const userLevel = user.englishLevel || EnglishLevel.B1;
-
-        if (!contextCache.current.has(current.id)) {
-            setAiContextLoading(true);
-            try {
-                // Pass bookContext here!
-                const ctx = await generateGeminiSentence(current.word, current.definition, userLevel, bookContext);
-                contextCache.current.set(current.id, ctx);
-                setAiContext(ctx);
-                storage.updateWordCache(current.id, ctx.english, ctx.japanese);
-            } finally {
-                setAiContextLoading(false);
-            }
-        } else {
-            setAiContext(contextCache.current.get(current.id) || null);
+      } else {
+        if (!cancelled) {
+          setAiContextLoading(true);
         }
-
-        // Prefetch Next
-        const nextIndex = currentIndex + 1;
-        if (nextIndex < queue.length) {
-            const nextWord = queue[nextIndex];
-            let hasCache = false;
-            if (nextWord.exampleSentence && nextWord.exampleMeaning) {
-                contextCache.current.set(nextWord.id, {
-                    english: nextWord.exampleSentence,
-                    japanese: nextWord.exampleMeaning
-                });
-                hasCache = true;
-            }
-            if (!hasCache && !contextCache.current.has(nextWord.id)) {
-                generateGeminiSentence(nextWord.word, nextWord.definition, userLevel, bookContext).then(ctx => {
-                    contextCache.current.set(nextWord.id, ctx);
-                    storage.updateWordCache(nextWord.id, ctx.english, ctx.japanese);
-                });
-            }
+        try {
+          const ctx = await generateGeminiSentence(current.word, current.definition, userLevel, bookContext);
+          contextCache.current.set(current.id, ctx);
+          if (!cancelled) {
+            setAiContext(ctx ?? null);
+          }
+          if (ctx) {
+            void storage.updateWordCache(current.id, ctx.english, ctx.japanese);
+          }
+        } finally {
+          if (!cancelled) {
+            setAiContextLoading(false);
+          }
         }
+      }
+
+      const nextWord = queue[currentIndex + 1];
+      if (!nextWord || contextCache.current.has(nextWord.id)) return;
+
+      if (nextWord.exampleSentence && nextWord.exampleMeaning) {
+        contextCache.current.set(nextWord.id, {
+          english: nextWord.exampleSentence,
+          japanese: nextWord.exampleMeaning,
+        });
+        return;
+      }
+
+      generateGeminiSentence(nextWord.word, nextWord.definition, userLevel, bookContext)
+        .then((ctx) => {
+          contextCache.current.set(nextWord.id, ctx);
+          if (ctx) {
+            return storage.updateWordCache(nextWord.id, ctx.english, ctx.japanese);
+          }
+        })
+        .catch(() => {});
     };
 
-    prefetchNext();
-  }, [queue, currentIndex, user.englishLevel, bookContext]);
+    loadHints();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [queue, currentIndex, user.englishLevel, bookContext, showHints]);
 
 
   const currentWord = queue[currentIndex];
+  const reviewPreview = reviewWords.slice(0, 3);
+  const nextReviewMessage = reviewPreview.length > 0
+    ? '今夜か明日の最初に、この単語だけ先に見直すと流れを戻しやすいです。'
+    : '苦手カードは出ていません。明日1回だけ軽く確認すれば十分です。';
 
   // Edit Handlers
   const startEditing = (e: React.MouseEvent) => {
@@ -199,6 +221,9 @@ const StudyMode: React.FC<StudyModeProps> = ({ user, bookId, onBack, onSessionCo
   const handleRating = async (rating: number) => {
     if (!currentWord) return;
     await storage.saveSRSHistory(user.uid, currentWord, rating);
+    if (rating <= 1) {
+      setReviewWords((prev) => prev.some((word) => word.id === currentWord.id) ? prev : [...prev, currentWord]);
+    }
     if (currentIndex < queue.length - 1) {
         resetCard();
         setTimeout(() => setCurrentIndex(prev => prev + 1), 200);
@@ -231,6 +256,8 @@ const StudyMode: React.FC<StudyModeProps> = ({ user, bookId, onBack, onSessionCo
     setAiContext(null); 
     setAiImage(null);
     setShowTranslation(false);
+    setShowHints(false);
+    setImageHintUnavailable(false);
     setIsEditing(false);
   }
 
@@ -240,6 +267,7 @@ const StudyMode: React.FC<StudyModeProps> = ({ user, bookId, onBack, onSessionCo
     setAiImageLoading(true);
     const imageBase64 = await generateWordImage(currentWord.word, currentWord.definition);
     setAiImage(imageBase64);
+    setImageHintUnavailable(!imageBase64);
     setAiImageLoading(false);
   };
 
@@ -263,16 +291,61 @@ const StudyMode: React.FC<StudyModeProps> = ({ user, bookId, onBack, onSessionCo
   );
 
   if (isFinished) return (
-    <div className="max-w-md mx-auto bg-white rounded-2xl shadow-2xl p-10 text-center animate-in zoom-in duration-500 relative overflow-hidden">
-        <div className="absolute top-0 left-0 w-full h-full bg-gradient-to-b from-yellow-50 to-white z-0"></div>
+    <div className="relative mx-auto max-w-2xl overflow-hidden rounded-[32px] bg-white p-8 shadow-2xl animate-in zoom-in duration-500">
+        <div className="absolute inset-0 bg-gradient-to-b from-yellow-50 via-white to-white"></div>
         <div className="relative z-10">
-            {leveledUp && <div className="mb-6 animate-bounce"><span className="px-4 py-2 bg-gradient-to-r from-yellow-400 to-orange-500 text-white font-black text-xl rounded-full shadow-lg transform rotate-2 inline-block">LEVEL UP!</span></div>}
-            <div className="w-24 h-24 bg-green-100 text-green-600 rounded-full flex items-center justify-center mx-auto mb-6 shadow-inner relative"><Award className={`w-12 h-12 ${leveledUp ? 'text-yellow-500' : 'text-green-600'}`} /></div>
-            <h2 className="text-3xl font-bold text-slate-800 mb-2">クエスト完了！</h2>
-            <div className="bg-slate-50 rounded-xl p-6 mb-8 border border-slate-200 space-y-2">
-                <div className="border-t border-slate-200 my-2 pt-2 flex justify-between text-medace-600 text-xl font-black"><span>合計スコア</span><span>+{earnedXP + streakBonusXP} XP</span></div>
+            <div className="flex flex-col items-center text-center">
+                {leveledUp && <div className="mb-4 animate-bounce"><span className="inline-block rounded-full bg-gradient-to-r from-yellow-400 to-orange-500 px-4 py-2 text-sm font-black text-white shadow-lg">LEVEL UP!</span></div>}
+                <div className="mb-5 flex h-20 w-20 items-center justify-center rounded-full bg-green-100 text-green-600 shadow-inner">
+                    <Award className={`h-10 w-10 ${leveledUp ? 'text-yellow-500' : 'text-green-600'}`} />
+                </div>
+                <h2 className="text-3xl font-black text-slate-900">クエスト完了！</h2>
+                <p className="mt-2 text-sm text-slate-500">{queue.length}語を進めました。次に直すところだけ見れば十分です。</p>
+                <div className="mt-4 inline-flex items-center gap-2 rounded-full bg-medace-50 px-4 py-2 text-sm font-bold text-medace-700">
+                    +{earnedXP + streakBonusXP} XP {streakBonusXP > 0 && <span className="text-medace-500">連続学習ボーナス込み</span>}
+                </div>
             </div>
-            <button onClick={handleExit} className="w-full px-6 py-3 bg-medace-600 text-white rounded-xl font-bold shadow-lg hover:bg-medace-700 transition-all">報酬を受け取る</button>
+
+            <div className="mt-8 grid gap-4 lg:grid-cols-[1.08fr_0.92fr]">
+                <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
+                    <div className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">次に見直す単語</div>
+                    {reviewPreview.length > 0 ? (
+                        <div className="mt-4 space-y-3">
+                            {reviewPreview.map((word) => (
+                                <div key={word.id} className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                                    <div className="flex items-center justify-between gap-3">
+                                        <div className="font-bold text-slate-900">{word.word}</div>
+                                        <span className="rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-bold text-amber-700">今夜もう一度</span>
+                                    </div>
+                                    <div className="mt-1 text-sm text-slate-500">{word.definition}</div>
+                                </div>
+                            ))}
+                        </div>
+                    ) : (
+                        <div className="mt-4 rounded-2xl border border-dashed border-emerald-200 bg-emerald-50 px-4 py-4 text-sm font-medium text-emerald-700">
+                            もう一度に回す単語はありません。このまま次の学習に進めます。
+                        </div>
+                    )}
+                </div>
+
+                <div className="rounded-3xl border border-medace-100 bg-[#fff8ef] p-5">
+                    <div className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">次の一手</div>
+                    <div className="mt-4 space-y-3 text-sm text-slate-600">
+                        <div className="rounded-2xl bg-white px-4 py-4">
+                            <div className="font-bold text-slate-900">次の復習タイミング</div>
+                            <div className="mt-1 leading-relaxed">{nextReviewMessage}</div>
+                        </div>
+                        <div className="rounded-2xl bg-white px-4 py-4">
+                            <div className="font-bold text-slate-900">明日の入り方</div>
+                            <div className="mt-1 leading-relaxed">最初の3分だけでいいので、今日の苦手カードから触ると続けやすいです。</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <button onClick={handleExit} className="mt-8 w-full rounded-2xl bg-medace-600 px-6 py-3 font-bold text-white shadow-lg transition-all hover:bg-medace-700">
+                ダッシュボードに戻る
+            </button>
         </div>
     </div>
   );
@@ -371,55 +444,84 @@ const StudyMode: React.FC<StudyModeProps> = ({ user, bookId, onBack, onSessionCo
                 )}
 
                 <div className="grid grid-cols-1 gap-3 flex-grow content-start">
-                    {/* AI Sentence Section */}
-                    <div className="relative flex w-full flex-col rounded-xl border border-white/10 bg-white/10 p-3 transition-colors hover:bg-white/12 md:p-4" onClick={(e) => e.stopPropagation()}>
-                        {aiContextLoading ? (
-                            <div className="flex flex-col items-center gap-2 text-medace-400 animate-pulse py-4">
-                                <Loader2 className="w-5 h-5 animate-spin" /> <span className="text-xs">AI例文を生成中...</span>
+                    {!showHints ? (
+                        <button
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                setShowHints(true);
+                            }}
+                            className="flex w-full flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-white/20 bg-white/6 px-4 py-5 text-center text-white/78 transition-colors hover:bg-white/10"
+                        >
+                            <Sparkles className="h-5 w-5 text-medace-300" />
+                            <span className="text-sm font-bold">まだ難しいときだけヒントを見る</span>
+                            <span className="text-xs text-white/60">例文・訳・画像ヒントをあとから開けます</span>
+                        </button>
+                    ) : (
+                        <>
+                            <div className="flex items-center justify-between rounded-xl border border-white/10 bg-white/6 px-4 py-3 text-xs font-bold uppercase tracking-[0.16em] text-white/68" onClick={(e) => e.stopPropagation()}>
+                                <span>ヒントを表示中</span>
+                                <button
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        setShowHints(false);
+                                    }}
+                                    className="rounded-full border border-white/15 px-3 py-1 text-[11px] font-bold text-white/82 transition-colors hover:bg-white/10"
+                                >
+                                    閉じる
+                                </button>
                             </div>
-                        ) : aiContext ? (
-                            <div className="text-center">
-                                <div className="flex items-center justify-between mb-2 text-medace-400 text-[10px] uppercase font-bold tracking-wider">
-                                    <span className="flex items-center gap-1">
-                                        <Sparkles className="w-3 h-3" /> 
-                                        AI解説 {bookContext && `(${bookContext.slice(0,15)}...)`}
-                                    </span>
-                                    <button onClick={(e) => speakText(e, aiContext.english)} className="hover:text-white transition-colors"><Volume2 className="w-4 h-4" /></button>
-                                </div>
-                                <p className="mb-3 text-base font-medium leading-relaxed text-white/88 md:text-lg">"{aiContext.english}"</p>
-                                
-                                {showTranslation ? (
-                                    <p className="animate-in fade-in border-t border-white/10 pt-2 text-xs text-white/70 md:text-sm">{aiContext.japanese}</p>
+
+                            <div className="relative flex w-full flex-col rounded-xl border border-white/10 bg-white/10 p-3 transition-colors hover:bg-white/12 md:p-4" onClick={(e) => e.stopPropagation()}>
+                                {aiContextLoading ? (
+                                    <div className="flex flex-col items-center gap-2 py-4 text-medace-400 animate-pulse">
+                                        <Loader2 className="w-5 h-5 animate-spin" /> <span className="text-xs">AI例文を生成中...</span>
+                                    </div>
+                                ) : aiContext ? (
+                                    <div className="text-center">
+                                        <div className="mb-2 flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-medace-400">
+                                            <span className="flex items-center gap-1">
+                                                <Sparkles className="w-3 h-3" />
+                                                AI例文 {bookContext && `(${bookContext.slice(0,15)}...)`}
+                                            </span>
+                                            <button onClick={(e) => speakText(e, aiContext.english)} className="transition-colors hover:text-white"><Volume2 className="w-4 h-4" /></button>
+                                        </div>
+                                        <p className="mb-3 text-base font-medium leading-relaxed text-white/88 md:text-lg">"{aiContext.english}"</p>
+
+                                        {showTranslation ? (
+                                            <p className="animate-in fade-in border-t border-white/10 pt-2 text-xs text-white/70 md:text-sm">{aiContext.japanese}</p>
+                                        ) : (
+                                            <button onClick={() => setShowTranslation(true)} className="mx-auto flex items-center justify-center gap-1 text-xs text-white/65 transition-colors hover:text-white">
+                                                <Languages className="w-3 h-3" /> 訳を表示
+                                            </button>
+                                        )}
+                                    </div>
                                 ) : (
-                                    <button onClick={() => setShowTranslation(true)} className="mx-auto flex items-center justify-center gap-1 text-xs text-white/65 transition-colors hover:text-white">
-                                        <Languages className="w-3 h-3" /> 訳を表示
+                                    <p className="text-center text-xs text-white/60">このカードは単語と意味に集中しましょう。</p>
+                                )}
+                            </div>
+
+                            <div className="relative flex min-h-[100px] w-full flex-col items-center justify-center overflow-hidden rounded-xl border border-white/10 bg-white/10 transition-colors hover:bg-white/12 md:min-h-[120px]" onClick={(e) => e.stopPropagation()}>
+                                {aiImageLoading ? (
+                                    <div className="flex flex-col items-center gap-2 text-blue-400 animate-pulse">
+                                        <Loader2 className="w-5 h-5 animate-spin" /> <span className="text-xs text-center">AIイメージ生成中...</span>
+                                    </div>
+                                ) : aiImage ? (
+                                    <div className="relative h-32 w-full group md:h-40">
+                                        <img src={aiImage} alt="視覚的記憶補助" className="h-full w-full object-contain opacity-90 transition-opacity group-hover:opacity-100" />
+                                    </div>
+                                ) : imageHintUnavailable ? (
+                                    <p className="px-4 text-center text-xs text-white/60">画像ヒントは今は利用できません。</p>
+                                ) : (
+                                    <button onClick={generateImage} className="group flex h-full w-full flex-col items-center justify-center gap-2 p-4 text-white/65 transition-colors hover:text-white">
+                                        <div className="rounded-full bg-white/10 p-2 transition-colors group-hover:bg-white/18">
+                                            <ImageIcon className="w-4 h-4" />
+                                        </div>
+                                        <span className="text-xs font-bold text-center">画像ヒントを表示</span>
                                     </button>
                                 )}
                             </div>
-                        ) : (
-                            <p className="text-center text-xs text-white/60">コンテキスト情報なし</p>
-                        )}
-                    </div>
-
-                    <div className="relative flex min-h-[100px] w-full flex-col items-center justify-center overflow-hidden rounded-xl border border-white/10 bg-white/10 transition-colors hover:bg-white/12 md:min-h-[120px]" onClick={(e) => e.stopPropagation()}>
-                    {aiImageLoading ? (
-                        <div className="flex flex-col items-center gap-2 text-blue-400 animate-pulse">
-                            <Loader2 className="w-5 h-5 animate-spin" /> <span className="text-xs text-center">AIイメージ生成中...</span>
-                        </div>
-                    ) : aiImage ? (
-                        <div className="w-full h-32 md:h-40 relative group">
-                             <img src={aiImage} alt="視覚的記憶補助" className="w-full h-full object-contain opacity-90 group-hover:opacity-100 transition-opacity" />
-                        </div>
-                    ) : (
-                        <button onClick={generateImage} className="group flex h-full w-full flex-col items-center justify-center gap-2 p-4 text-white/65 transition-colors hover:text-white">
-                        <div className="rounded-full bg-white/10 p-2 transition-colors group-hover:bg-white/18">
-                             <Lock className="w-4 h-4 group-hover:hidden" />
-                             <ImageIcon className="w-4 h-4 hidden group-hover:block" />
-                        </div>
-                        <span className="text-xs font-bold text-center">画像ヒントを表示</span>
-                        </button>
+                        </>
                     )}
-                    </div>
                 </div>
             </div>
           </div>
