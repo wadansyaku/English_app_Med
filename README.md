@@ -137,6 +137,8 @@ GitHub Actions 側では次を使います。
 
 Variables 未設定時は workflow 側で `medace-english-app` / `medace-db` を既定値として使います。
 
+ローカルから接続状態を確認する場合は `npm run cf:doctor` を使ってください。`GEMINI_API_KEY` は未設定でも warning 扱いで、GitHub / Cloudflare の接続と Pages / D1 の疎通を先に確認できます。
+
 ### Frontend Environment Variables
 
 フリープランの広告枠を実配信するには、Vite の公開環境変数に AdSense 情報を設定します。
