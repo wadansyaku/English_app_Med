@@ -4,6 +4,7 @@ import { handleAiAction } from '../_shared/ai-actions';
 import { handleError, HttpError, json, noContent, readJson } from '../_shared/http';
 import { handleStorageAction } from '../_shared/storage-actions';
 import { AppEnv } from '../_shared/types';
+import { DEMO_SESSION_TTL_MS } from '../../utils/demo';
 
 interface AuthBody {
   action: 'demo-login' | 'email-auth';
@@ -53,7 +54,7 @@ const handleDemoLogin = async (env: AppEnv, request: Request, body: AuthBody): P
   }
 
   const user = await ensureDemoUser(env, role, body.organizationRole);
-  const sessionCookie = await createSession(env, request, user.id);
+  const sessionCookie = await createSession(env, request, user.id, DEMO_SESSION_TTL_MS);
   return createJsonResponse(mapUserRowToProfile(user), {
     headers: { 'Set-Cookie': sessionCookie },
   });

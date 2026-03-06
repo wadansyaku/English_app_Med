@@ -29,6 +29,7 @@ import {
 import { getSubscriptionPolicy } from '../config/subscription';
 import { CloudflareStorageService } from './cloudflare';
 import { formatDateKey, formatMonthKey, getRelativeDateKey, getTodayDateKey } from '../utils/date';
+import { buildDemoEmail, getDemoDisplayName, isDemoEmail } from '../utils/demo';
 
 export interface IStorageService {
   login(role: UserRole, demoPassword?: string, organizationRole?: OrganizationRole): Promise<UserProfile | null>; 
@@ -209,6 +210,33 @@ const IDB_MOCK_ASSIGNMENTS = [
   { studentUid: 'student-biz-2', instructorUid: 'mock-instructor-001' },
 ];
 
+const createEphemeralDemoUser = (role: UserRole, organizationRole?: OrganizationRole): UserProfile => ({
+  uid: `demo-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+  displayName: getDemoDisplayName(role, organizationRole),
+  role,
+  organizationRole,
+  email: buildDemoEmail(role, organizationRole),
+  subscriptionPlan:
+    organizationRole
+      ? SubscriptionPlan.TOB_PAID
+      : role === UserRole.STUDENT
+        ? SubscriptionPlan.TOC_FREE
+        : SubscriptionPlan.TOB_PAID,
+  organizationName:
+    role === UserRole.ADMIN
+      ? 'Steady Study HQ'
+      : organizationRole
+        ? 'Steady Study Demo Academy'
+        : undefined,
+  needsOnboarding: role === UserRole.STUDENT,
+  stats: {
+    xp: 0,
+    level: 1,
+    currentStreak: 1,
+    lastLoginDate: getTodayDateKey(),
+  },
+});
+
 const normalizeOfficialBookText = (value: string | undefined): string | undefined => {
   if (!value) return undefined;
   return value
@@ -289,11 +317,9 @@ class IndexedDBStorageService implements IStorageService {
 
   async login(role: UserRole, demoPassword?: string, organizationRole?: OrganizationRole): Promise<UserProfile | null> {
     if (role === UserRole.ADMIN && demoPassword !== 'admin') return null;
-    const matchedUser = IDB_MOCK_USERS.find((user) => user.role === role && (organizationRole ? user.organizationRole === organizationRole : !user.organizationRole || user.role === UserRole.ADMIN)) || null;
-    if (matchedUser) {
-      await this.saveSession(matchedUser);
-    }
-    return matchedUser;
+    const demoUser = createEphemeralDemoUser(role, organizationRole);
+    await this.saveSession(demoUser);
+    return demoUser;
   }
 
   async authenticate(email: string, password: string, isSignUp: boolean, role?: UserRole, displayName?: string): Promise<UserProfile | null> {
@@ -719,7 +745,12 @@ class IndexedDBStorageService implements IStorageService {
 
     if (sessionUser?.organizationName) {
       const orgStudents = withAssignments.filter((student) => student.organizationName === sessionUser.organizationName);
-      if (sessionUser.organizationRole === OrganizationRole.GROUP_ADMIN) {
+      const bypassAssignment =
+        sessionUser.organizationRole === OrganizationRole.GROUP_ADMIN ||
+        (sessionUser.role === UserRole.INSTRUCTOR
+          && sessionUser.organizationRole === OrganizationRole.INSTRUCTOR
+          && isDemoEmail(sessionUser.email));
+      if (bypassAssignment) {
         return orgStudents;
       }
       return orgStudents.filter((student) => !student.assignedInstructorUid || student.assignedInstructorUid === sessionUser.uid);

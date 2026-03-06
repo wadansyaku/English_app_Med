@@ -4,16 +4,18 @@ import { BookOpen, LogOut, Zap, Star, Trophy } from 'lucide-react';
 import { UserRole, UserProfile, UserStudyMode } from '../types';
 import { BRAND } from '../config/brand';
 import { getHomeViewForUser, getWorkspaceNavLabel, getWorkspaceRoleLabel } from '../config/access';
+import { getDemoAccessWindowLabel, isDemoEmail } from '../utils/demo';
 
 interface LayoutProps {
   children: React.ReactNode;
   user: UserProfile | null;
   onLogout: () => void;
+  onResetDemo?: () => void;
   currentView: string;
   onChangeView: (view: string) => void;
 }
 
-const Layout: React.FC<LayoutProps> = ({ children, user, onLogout, currentView, onChangeView }) => {
+const Layout: React.FC<LayoutProps> = ({ children, user, onLogout, onResetDemo, currentView, onChangeView }) => {
   // Calculate progress to next level (Level * 100 XP)
   const stats = user?.stats || { xp: 0, level: 1, currentStreak: 0 };
   const xpToNext = stats.level * 100;
@@ -22,11 +24,33 @@ const Layout: React.FC<LayoutProps> = ({ children, user, onLogout, currentView, 
   const navLabel = getWorkspaceNavLabel(user);
   const workspaceLabel = getWorkspaceRoleLabel(user);
   const isGameMode = (user?.studyMode || UserStudyMode.FOCUS) === UserStudyMode.GAME;
+  const isDemoUser = isDemoEmail(user?.email);
 
   return (
     <div className="min-h-screen bg-medace-50/40 flex flex-col font-sans">
       {/* Header */}
       <header className="bg-white/88 backdrop-blur-xl border-b border-medace-100 sticky top-0 z-50 shadow-[0_14px_34px_rgba(246,109,11,0.08)]">
+        {isDemoUser && (
+          <div className="border-b border-amber-200/80 bg-[linear-gradient(90deg,#fff8e8_0%,#fff1d1_100%)]">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div>
+                <p className="text-[11px] font-black uppercase tracking-[0.18em] text-amber-700">Limited Demo Access</p>
+                <p className="mt-1 text-sm font-medium text-slate-700">
+                  体験用アカウントは <span className="font-black text-slate-950">{getDemoAccessWindowLabel()} 限定</span> です。別端末では別の体験セッションが作成され、一定時間後に自動でリセットされます。
+                </p>
+              </div>
+              {onResetDemo && (
+                <button
+                  type="button"
+                  onClick={onResetDemo}
+                  className="inline-flex items-center justify-center rounded-full border border-amber-300 bg-white px-4 py-2 text-sm font-black text-amber-800 transition-colors hover:bg-amber-50"
+                >
+                  新しい体験を開始
+                </button>
+              )}
+            </div>
+          </div>
+        )}
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-18 min-h-[72px] flex items-center justify-between">
           <div className="flex items-center gap-3 cursor-pointer" onClick={() => onChangeView(homeView)}>
             <div className="bg-[linear-gradient(135deg,#FCD797_0%,#FFBF52_36%,#F66D0B_100%)] p-2.5 rounded-2xl shadow-lg shadow-medace-200/70">

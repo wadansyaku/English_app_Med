@@ -1,11 +1,69 @@
 import { EnglishLevel, OrganizationRole, SubscriptionPlan, UserGrade, UserProfile, UserRole, UserStats, UserStudyMode } from '../../types';
 import { getRelativeDateKey, getTodayDateKey } from '../../utils/date';
+import { buildDemoEmail, DEMO_RETENTION_TTL_MS, getDemoDisplayName } from '../../utils/demo';
 import { HttpError } from './http';
 import { AppEnv, DbUserRow } from './types';
 
 const SESSION_COOKIE_NAME = 'medace_session';
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30;
 const PBKDF2_ITERATIONS = 100000;
+const DAY_MS = 86400000;
+const DEMO_ORGANIZATION_NAME = 'Steady Study Demo Academy';
+const DEMO_ORGANIZATION_STAFF: Array<{
+  email: string;
+  displayName: string;
+  role: UserRole;
+  organizationRole: OrganizationRole;
+}> = [
+  {
+    email: 'shiina@demo-school.jp',
+    displayName: '椎名 先生',
+    role: UserRole.INSTRUCTOR,
+    organizationRole: OrganizationRole.INSTRUCTOR,
+  },
+];
+
+const DEMO_ORGANIZATION_STUDENTS: Array<{
+  email: string;
+  displayName: string;
+  grade: UserGrade;
+  englishLevel: EnglishLevel;
+  daysSinceActive: number;
+  attemptBase: number;
+  correctOffset: number;
+  hasLearningPlan: boolean;
+}> = [
+  {
+    email: 'sota@demo-school.jp',
+    displayName: '黒田 颯太',
+    grade: UserGrade.JHS3,
+    englishLevel: EnglishLevel.B1,
+    daysSinceActive: 1,
+    attemptBase: 4,
+    correctOffset: 1,
+    hasLearningPlan: true,
+  },
+  {
+    email: 'hina@demo-school.jp',
+    displayName: '田中 陽葵',
+    grade: UserGrade.JHS2,
+    englishLevel: EnglishLevel.A2,
+    daysSinceActive: 4,
+    attemptBase: 3,
+    correctOffset: 2,
+    hasLearningPlan: false,
+  },
+  {
+    email: 'yuzuki@demo-school.jp',
+    displayName: '森 結月',
+    grade: UserGrade.SHS1,
+    englishLevel: EnglishLevel.B2,
+    daysSinceActive: 0,
+    attemptBase: 5,
+    correctOffset: 0,
+    hasLearningPlan: true,
+  },
+];
 
 const todayString = (): string => getTodayDateKey();
 
@@ -188,6 +246,136 @@ export const createUser = async (
   return user;
 };
 
+const ensureDemoOrganizationSeed = async (env: AppEnv, organizationName?: string): Promise<void> => {
+  if (organizationName !== DEMO_ORGANIZATION_NAME) return;
+
+  const now = Date.now();
+  const seededStudents: DbUserRow[] = [];
+
+  for (const staff of DEMO_ORGANIZATION_STAFF) {
+    const existing = await findUserByEmail(env, staff.email);
+    if (existing) continue;
+    await createUser(env, {
+      email: staff.email,
+      passwordHash: null,
+      displayName: staff.displayName,
+      role: staff.role,
+      organizationRole: staff.organizationRole,
+      subscriptionPlan: SubscriptionPlan.TOB_PAID,
+      organizationName,
+    });
+  }
+
+  for (const config of DEMO_ORGANIZATION_STUDENTS) {
+    const existing = await findUserByEmail(env, config.email);
+    if (existing) {
+      seededStudents.push(existing);
+      continue;
+    }
+
+    const created = await createUser(env, {
+      email: config.email,
+      passwordHash: null,
+      displayName: config.displayName,
+      role: UserRole.STUDENT,
+      organizationRole: OrganizationRole.STUDENT,
+      grade: config.grade,
+      englishLevel: config.englishLevel,
+      subscriptionPlan: SubscriptionPlan.TOB_PAID,
+      organizationName,
+    });
+    seededStudents.push(created);
+  }
+
+  const wordResult = await env.DB.prepare(`
+    SELECT
+      w.id AS word_id,
+      w.book_id AS book_id
+    FROM words w
+    JOIN books b ON b.id = w.book_id
+    WHERE b.created_by IS NULL
+    ORDER BY b.is_priority DESC, b.title ASC, w.word_number ASC
+    LIMIT 48
+  `).all();
+
+  const seededWords = ((wordResult?.results as Array<{ word_id: string; book_id: string }> | undefined) || []);
+  if (seededWords.length === 0) return;
+
+  for (const [studentIndex, student] of seededStudents.entries()) {
+    const config = DEMO_ORGANIZATION_STUDENTS[studentIndex];
+    const studentWords = seededWords.slice(studentIndex * 12, studentIndex * 12 + 12);
+    const planBookIds = Array.from(new Set(studentWords.map((row) => row.book_id))).slice(0, 3);
+
+    for (const [wordIndex, word] of studentWords.entries()) {
+      const attemptCount = config.attemptBase + (wordIndex % 3);
+      const correctCount = Math.max(1, attemptCount - config.correctOffset - (wordIndex % 2 === 0 ? 0 : 1));
+      const status =
+        config.daysSinceActive === 0
+          ? (wordIndex % 4 === 0 ? 'graduated' : 'review')
+          : config.daysSinceActive >= 4
+            ? (wordIndex % 3 === 0 ? 'learning' : 'review')
+            : (wordIndex % 5 === 0 ? 'graduated' : 'review');
+      const intervalDays = status === 'graduated' ? 14 : status === 'review' ? 6 : 2;
+      const lastStudiedAt = now - (config.daysSinceActive * DAY_MS) - wordIndex * 45 * 60 * 1000;
+      const nextReviewDate = lastStudiedAt + intervalDays * DAY_MS;
+
+      await env.DB.prepare(`
+        INSERT INTO learning_histories (
+          user_id, word_id, book_id, status, last_studied_at, next_review_date,
+          interval_days, ease_factor, correct_count, attempt_count
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(user_id, word_id) DO UPDATE SET
+          book_id = excluded.book_id,
+          status = excluded.status,
+          last_studied_at = excluded.last_studied_at,
+          next_review_date = excluded.next_review_date,
+          interval_days = excluded.interval_days,
+          ease_factor = excluded.ease_factor,
+          correct_count = excluded.correct_count,
+          attempt_count = excluded.attempt_count
+      `).bind(
+        student.id,
+        word.word_id,
+        word.book_id,
+        status,
+        lastStudiedAt,
+        nextReviewDate,
+        intervalDays,
+        2.5,
+        correctCount,
+        attemptCount
+      ).run();
+    }
+
+    if (config.hasLearningPlan && planBookIds.length > 0) {
+      await env.DB.prepare(`
+        INSERT INTO learning_plans (
+          user_id, created_at, target_date, goal_description, daily_word_goal, selected_book_ids, status, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET
+          created_at = excluded.created_at,
+          target_date = excluded.target_date,
+          goal_description = excluded.goal_description,
+          daily_word_goal = excluded.daily_word_goal,
+          selected_book_ids = excluded.selected_book_ids,
+          status = excluded.status,
+          updated_at = excluded.updated_at
+      `).bind(
+        student.id,
+        now - DAY_MS,
+        getRelativeDateKey(45),
+        '体験デモ用の標準学習プラン',
+        config.daysSinceActive === 0 ? 14 : 12,
+        JSON.stringify(planBookIds),
+        'ACTIVE',
+        now
+      ).run();
+    } else {
+      await env.DB.prepare('DELETE FROM learning_plans WHERE user_id = ?').bind(student.id).run();
+    }
+  }
+};
+
 export const touchUserStreak = async (env: AppEnv, row: DbUserRow): Promise<DbUserRow> => {
   const nextStats = updateStreak(normalizeStats(row));
   const currentStats = normalizeStats(row);
@@ -210,16 +398,21 @@ export const touchUserStreak = async (env: AppEnv, row: DbUserRow): Promise<DbUs
   return updated;
 };
 
-export const createSession = async (env: AppEnv, request: Request, userId: string): Promise<string> => {
+export const createSession = async (
+  env: AppEnv,
+  request: Request,
+  userId: string,
+  ttlMs: number = SESSION_TTL_MS
+): Promise<string> => {
   const token = crypto.randomUUID();
-  const expiresAt = Date.now() + SESSION_TTL_MS;
+  const expiresAt = Date.now() + ttlMs;
 
   await env.DB.prepare(`
     INSERT INTO sessions (token, user_id, expires_at, created_at)
     VALUES (?, ?, ?, ?)
   `).bind(token, userId, expiresAt, Date.now()).run();
 
-  return buildCookie(request, token, Math.floor(SESSION_TTL_MS / 1000));
+  return buildCookie(request, token, Math.floor(ttlMs / 1000));
 };
 
 export const clearSession = async (env: AppEnv, request: Request): Promise<string> => {
@@ -274,24 +467,18 @@ export const requireOrganizationRole = (row: DbUserRow, roles: OrganizationRole[
 };
 
 export const ensureDemoUser = async (env: AppEnv, role: UserRole, organizationRole?: OrganizationRole): Promise<DbUserRow> => {
-  const demoKey = organizationRole ? organizationRole.toLowerCase() : role.toLowerCase();
-  const email = `demo_${demoKey}@medace.app`;
-  const displayName =
-    role === UserRole.ADMIN
-      ? 'システム管理者 (Demo)'
-      : organizationRole === OrganizationRole.GROUP_ADMIN
-        ? '朝比奈 由奈 (グループ管理者 Demo)'
-        : organizationRole === OrganizationRole.INSTRUCTOR
-          ? 'Oak 先生 (グループ講師 Demo)'
-          : organizationRole === OrganizationRole.STUDENT
-            ? '黒田 颯太 (グループ生徒 Demo)'
-            : '鈴木 健太 (フリー Demo)';
+  await env.DB.prepare('DELETE FROM sessions WHERE expires_at <= ?').bind(Date.now()).run();
+  await env.DB.prepare(`
+    DELETE FROM users
+    WHERE email GLOB 'demo_*@medace.app'
+      AND created_at < ?
+  `).bind(Date.now() - DEMO_RETENTION_TTL_MS).run();
 
-  const existing = await findUserByEmail(env, email);
-  if (existing) return existing;
+  const email = buildDemoEmail(role, organizationRole);
+  const displayName = getDemoDisplayName(role, organizationRole);
 
   const passwordHash = await hashPassword(`demo-${role.toLowerCase()}-${crypto.randomUUID()}`);
-  return createUser(env, {
+  const created = await createUser(env, {
     email,
     passwordHash,
     displayName,
@@ -310,4 +497,6 @@ export const ensureDemoUser = async (env: AppEnv, role: UserRole, organizationRo
           ? 'Steady Study Demo Academy'
           : undefined,
   });
+  await ensureDemoOrganizationSeed(env, created.organization_name || undefined);
+  return created;
 };

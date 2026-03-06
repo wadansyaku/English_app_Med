@@ -13,6 +13,7 @@ import { storage } from './services/storage';
 import { AUTH_COPY, BRAND } from './config/brand';
 import { getHomeViewForUser, isGroupAdmin } from './config/access';
 import { getSubscriptionPolicy } from './config/subscription';
+import { getDemoAccessWindowLabel, isDemoEmail } from './utils/demo';
 import { ArrowRight, BookOpen, Building2, CheckCircle2, ChevronDown, ChevronUp, Loader2, Lock, LogIn, Mail, Sparkles, User, UserPlus } from 'lucide-react';
 
 const LOGIN_PLAN_PREVIEWS = [
@@ -116,6 +117,8 @@ const App: React.FC = () => {
 
     setAuthError(null);
     setAuthLoading(true);
+    setSelectedBookId(null);
+    setReturnView('dashboard');
     try {
       const loggedInUser = await storage.login(role, demoPassword, organizationRole);
       if (loggedInUser) {
@@ -130,6 +133,11 @@ const App: React.FC = () => {
     } finally {
       setAuthLoading(false);
     }
+  };
+
+  const handleResetDemo = async () => {
+    if (!user || !isDemoEmail(user.email)) return;
+    await handleDemoLogin(user.role, user.organizationRole);
   };
 
   const handleEmailAuth = async (e: React.FormEvent) => {
@@ -252,9 +260,17 @@ const App: React.FC = () => {
                 </div>
 
                 <div className="rounded-2xl border border-white/15 bg-medace-900/15 p-5">
-                  <p className="text-xs font-bold tracking-[0.18em] uppercase text-white/70">{AUTH_COPY.demoEyebrow}</p>
+                  <div className="flex items-center justify-between gap-3 flex-wrap">
+                    <p className="text-xs font-bold tracking-[0.18em] uppercase text-white/70">{AUTH_COPY.demoEyebrow}</p>
+                    <span className="rounded-full border border-white/20 bg-white/10 px-3 py-1 text-[11px] font-black tracking-[0.16em] uppercase text-white/88">
+                      {getDemoAccessWindowLabel()} 限定
+                    </span>
+                  </div>
                   <p className="mt-2 text-sm text-white/85">
-                    生徒の学習導線だけでなく、学校・教室向けのビジネス版デモもこの画面からそのまま確認できます。
+                    生徒の学習導線だけでなく、学校・教室向けのビジネス版デモもこの画面からそのまま確認できます。体験用アカウントは期間限定で、別端末では別の体験セッションが作られます。
+                  </p>
+                  <p className="mt-3 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-xs leading-relaxed text-white/72">
+                    初回診断やテストを最初から試せるよう、体験ログインごとに新しいデモ環境を作成します。前回の demo 状態は別ブラウザや別端末へ共有されません。
                   </p>
                   <button
                     onClick={() => handleDemoLogin(UserRole.STUDENT)}
@@ -273,7 +289,7 @@ const App: React.FC = () => {
                   {showAlternateAccess && (
                     <div className="mt-3 grid gap-3 rounded-2xl border border-white/10 bg-white/5 p-3">
                       <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-xs font-medium leading-relaxed text-white/75">
-                        ここから先はすべてビジネス版デモです。既存の公式単語帳、学校向け運用画面、講師通知導線までそのまま確認できます。
+                        ここから先はすべてビジネス版デモです。既存の公式単語帳、学校向け運用画面、講師通知導線までそのまま確認できます。各デモは {getDemoAccessWindowLabel()} の期間限定で、別端末とは共有されません。
                       </div>
                       <div className="grid gap-3 md:grid-cols-2">
                         {BUSINESS_DEMO_OPTIONS.map((option) => (
@@ -498,6 +514,7 @@ const App: React.FC = () => {
     <Layout 
       user={user} 
       onLogout={handleLogout}
+      onResetDemo={isDemoEmail(user?.email) ? handleResetDemo : undefined}
       currentView={currentView}
       onChangeView={setCurrentView}
     >

@@ -1,6 +1,7 @@
 import { AI_ACTION_ESTIMATES, getSubscriptionPolicy } from '../../config/subscription';
 import { AccountOverview, ActivityLog, AdminAiActionSummary, AdminBookInsight, AdminDashboardSnapshot, AdminOrganizationInsight, AdminPlanBreakdownItem, AdminRiskBreakdownItem, AdminTrendPoint, AdminWordReportSummary, BookAccessScope, BookCatalogSource, BookMetadata, BookProgress, DashboardSnapshot, InstructorNotification, LeaderboardEntry, LearningHistory, LearningPlan, LearningPreference, LearningPreferenceIntensity, MasteryDistribution, OrganizationDashboardSnapshot, OrganizationInstructorSummary, OrganizationRole, StudentRiskLevel, StudentSummary, StudentWorksheetSnapshot, SubscriptionPlan, UserProfile, UserRole, WordData } from '../../types';
 import { formatDateKey, formatMonthKey, getTodayDateKey, shiftDateKey } from '../../utils/date';
+import { isDemoEmail } from '../../utils/demo';
 import { mapUserRowToProfile, requireOrganizationRole, requireRole } from './auth';
 import { HttpError } from './http';
 import { AppEnv, DbUserRow } from './types';
@@ -242,6 +243,14 @@ const getUserOrganizationRole = (user: DbUserRow): OrganizationRole | undefined 
   if (user.role === UserRole.INSTRUCTOR) return OrganizationRole.INSTRUCTOR;
   if (user.role === UserRole.STUDENT) return OrganizationRole.STUDENT;
   return undefined;
+};
+
+const canBypassInstructorAssignment = (user: Pick<DbUserRow, 'role' | 'organization_role' | 'email'>): boolean => {
+  if (user.role === UserRole.ADMIN) return true;
+  if (user.organization_role === OrganizationRole.GROUP_ADMIN) return true;
+  return user.role === UserRole.INSTRUCTOR
+    && user.organization_role === OrganizationRole.INSTRUCTOR
+    && isDemoEmail(user.email);
 };
 
 const getBookOwnership = async (env: AppEnv, bookId: string): Promise<{ id: string; created_by: string | null; } | null> => {
@@ -716,9 +725,7 @@ const handleSaveHistory = async (env: AppEnv, user: DbUserRow, result: Partial<L
 
 const handleGetAllStudentsProgress = async (env: AppEnv, currentUser: DbUserRow): Promise<StudentSummary[]> => {
   const organizationName = currentUser.role === UserRole.ADMIN ? null : currentUser.organization_name || null;
-  const bypassInstructorAssignment =
-    currentUser.role === UserRole.ADMIN ||
-    currentUser.organization_role === OrganizationRole.GROUP_ADMIN;
+  const bypassInstructorAssignment = canBypassInstructorAssignment(currentUser);
   const rows = await readAll<{
     uid: string;
     name: string;
@@ -1339,12 +1346,18 @@ const handleGetOrganizationDashboardSnapshot = async (env: AppEnv, user: DbUserR
   const [memberCountRow, instructorCountRow, learningPlanCountRow, notifications7dRow, instructorRows] = await Promise.all([
     readFirst<{ count: number }>(
       env,
-      'SELECT COUNT(*) AS count FROM users WHERE organization_name = ?',
+      `SELECT COUNT(*) AS count
+       FROM users
+       WHERE organization_name = ?
+         AND email NOT GLOB 'demo_*@medace.app'`,
       organizationName
     ),
     readFirst<{ count: number }>(
       env,
-      'SELECT COUNT(*) AS count FROM users WHERE role = ? AND organization_name = ?',
+      `SELECT COUNT(*) AS count
+       FROM users
+       WHERE role = ? AND organization_name = ?
+         AND email NOT GLOB 'demo_*@medace.app'`,
       UserRole.INSTRUCTOR,
       organizationName
     ),
@@ -1403,6 +1416,7 @@ const handleGetOrganizationDashboardSnapshot = async (env: AppEnv, user: DbUserR
          GROUP BY instructor_user_id
        ) assignments ON assignments.instructor_user_id = u.id
        WHERE u.role = ? AND u.organization_name = ?
+         AND u.email NOT GLOB 'demo_*@medace.app'
        ORDER BY
          CASE WHEN u.organization_role = ? THEN 0 ELSE 1 END,
          notifications_7d DESC,
@@ -1473,7 +1487,7 @@ const handleSendInstructorNotification = async (
   if (instructor.role !== UserRole.ADMIN && instructor.organization_name && instructor.organization_name !== student.organization_name) {
     throw new HttpError(403, '同じ組織の生徒にのみ通知できます。');
   }
-  if (instructor.role === UserRole.INSTRUCTOR && instructor.organization_role !== OrganizationRole.GROUP_ADMIN) {
+  if (!canBypassInstructorAssignment(instructor)) {
     const assignment = await readFirst<{ instructor_user_id: string | null }>(
       env,
       'SELECT instructor_user_id FROM student_instructor_assignments WHERE student_user_id = ?',
